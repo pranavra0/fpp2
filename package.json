@@ -1,0 +1,20 @@
+{
+    "name": "shallot-project",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite --host 127.0.0.1",
+        "build": "vite build",
+        "preview": "vite preview --host 127.0.0.1",
+        "check": "tsc --noEmit && vite build"
+    },
+    "dependencies": {
+        "@dylanebert/shallot": "0.10.3"
+    },
+    "devDependencies": {
+        "@types/bun": "^1.4.3",
+        "typescript": "^7.0.2",
+        "vite": "^8.3.4"
+    }
+}
