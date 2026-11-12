@@ -1,47 +1,5 @@
 import { normalizeVec3, setVec3, type Vec3 } from "./vec";
-
-export type Platform = {
-    centerX: number;
-    centerZ: number;
-    topY: number;
-    width: number;
-    depth: number;
-};
-
-export const DEFAULT_TUNING = {
-    SIM_HZ: 120,
-    GRAVITY_MPS2: 9.81,
-    LAUNCH_SPEED_MPS: 7.8,
-    CHARGE_BONUS_MPS: 5.5,
-    MIN_LAUNCH_VERTICAL_MPS: 7.4,
-    CHARGE_VERTICAL_BONUS_MPS: 2.5,
-    POLE_LENGTH_M: 1,
-    POLE_MIN_LENGTH_M: 0.7,
-    POLE_MAX_LENGTH_M: 3.5,
-    POLE_LENGTH_RATE_MPS: 1.5,
-    MAX_LEAN_RAD: 0.72,
-    LEAN_GROUND_RESPONSE: 25,
-    LEAN_ASCENT_RESPONSE: 16,
-    LEAN_DESCENT_RESPONSE: 19,
-    GROUND_CONTROL_MPS2: 18,
-    AIR_ASCENT_CONTROL_MPS2: 4,
-    AIR_DESCENT_CONTROL_MPS2: 6,
-    MAX_HORIZONTAL_SPEED_MPS: 18,
-    CHARGE_MAX_S: 0.3,
-    AUTO_BOUNCE_DELAY_S: 0.045,
-    INPUT_BUFFER_S: 0.12,
-    MIN_COMPRESSION_M: 0.12,
-    MAX_COMPRESSION_M: 0.4,
-    LANDING_VERTICAL_TOLERANCE_M: 0.06,
-    LANDING_EDGE_TOLERANCE_M: 0.12,
-    PLATFORMS: [
-        { centerX: 3, centerZ: -2, topY: 2.6, width: 4, depth: 5.5 },
-        { centerX: -3, centerZ: 3, topY: 5.2, width: 4, depth: 5.5 },
-        { centerX: 3, centerZ: -3, topY: 7.8, width: 4, depth: 5.5 },
-    ] as Platform[],
-};
-
-export type Tuning = typeof DEFAULT_TUNING;
+import { DEFAULT_TUNING, type Tuning } from "./config/gameplay";
 
 export type Controls = {
     leanX: number;
@@ -69,6 +27,15 @@ export type Sim = {
         carryVelZ: number;
     };
 };
+
+export type LandingSweep = {
+    previousTip: Vec3;
+    currentTip: Vec3;
+};
+
+export type LandingContact = { surfaceY: number };
+
+export type LandingQuery = (sweep: LandingSweep) => LandingContact | undefined;
 
 export const NEUTRAL_CONTROLS: Controls = {
     leanX: 0,
@@ -218,15 +185,34 @@ function launch(sim: Sim, tuning: Tuning): void {
     limitHorizontalSpeed(body.vel, tuning);
 }
 
-function platformContains(platform: Platform, x: number, z: number, edgeTolerance: number): boolean {
-    return (
-        Math.abs(x - platform.centerX) <= platform.width * 0.5 + edgeTolerance &&
-        Math.abs(z - platform.centerZ) <= platform.depth * 0.5 + edgeTolerance
-    );
-}
-
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value));
+}
+
+export function landingAlpha(
+    sweep: LandingSweep,
+    surfaceY: number,
+    tuning: Tuning = DEFAULT_TUNING,
+): number | undefined {
+    const deltaY = sweep.currentTip.y - sweep.previousTip.y;
+    if (deltaY >= 0) return undefined;
+    if (
+        sweep.previousTip.y < surfaceY - tuning.LANDING_VERTICAL_TOLERANCE_M ||
+        sweep.currentTip.y > surfaceY + tuning.LANDING_VERTICAL_TOLERANCE_M
+    )
+        return undefined;
+    return clamp01((sweep.previousTip.y - surfaceY) / -deltaY);
+}
+
+export function simulationSubstepCount(
+    fixedDeltaTime: number,
+    tuning: Tuning = DEFAULT_TUNING,
+): number {
+    const count = fixedDeltaTime * tuning.SIM_HZ;
+    if (!Number.isInteger(count) || count < 1) {
+        throw new Error("the pogo simulation rate must divide the ECS fixed rate");
+    }
+    return count;
 }
 
 function updateCompression(sim: Sim, tuning: Tuning, controls: Controls, dt: number): void {
@@ -260,8 +246,9 @@ function updateCompression(sim: Sim, tuning: Tuning, controls: Controls, dt: num
 /* Fixed steps keep landings and charge timing independent of render cadence. */
 export function step(
     sim: Sim,
-    tuning: Tuning = DEFAULT_TUNING,
-    controls: Controls = NEUTRAL_CONTROLS,
+    tuning: Tuning,
+    controls: Controls,
+    findLanding: LandingQuery,
 ): void {
     const dt = 1 / tuning.SIM_HZ;
     const { body, pole, pogo } = sim;
@@ -312,39 +299,21 @@ export function step(
     if (tipDeltaY >= 0) return;
 
     // Keep the no-hit sentinel outside [0, 1], the range of valid within-tick crossings.
-    let impactAlpha = 2;
-    let impactY = 0;
-    let impactX = 0;
-    let impactZ = 0;
-    const tolerance = tuning.LANDING_VERTICAL_TOLERANCE_M;
-    // Interpolate within the tick so a fast tip cannot pass through a thin surface.
-    if (previousTipY >= -tolerance && currentTipY <= tolerance) {
-        impactAlpha = clamp01(previousTipY / -tipDeltaY);
-        impactY = 0;
-        impactX = previousTipX + (currentTipX - previousTipX) * impactAlpha;
-        impactZ = previousTipZ + (currentTipZ - previousTipZ) * impactAlpha;
-    }
-    // Keep the earliest valid crossing when multiple surfaces overlap vertically.
-    for (const platform of tuning.PLATFORMS) {
-        if (previousTipY < platform.topY - tolerance || currentTipY > platform.topY + tolerance) {
-            continue;
-        }
-        const alpha = clamp01((previousTipY - platform.topY) / -tipDeltaY);
-        const x = previousTipX + (currentTipX - previousTipX) * alpha;
-        const z = previousTipZ + (currentTipZ - previousTipZ) * alpha;
-        if (
-            alpha < impactAlpha &&
-            platformContains(platform, x, z, tuning.LANDING_EDGE_TOLERANCE_M)
-        ) {
-            impactAlpha = alpha;
-            impactY = platform.topY;
-            impactX = x;
-            impactZ = z;
-        }
-    }
-    if (impactAlpha > 1) return;
+    const sweep: LandingSweep = {
+        previousTip: { x: previousTipX, y: previousTipY, z: previousTipZ },
+        currentTip: { x: currentTipX, y: currentTipY, z: currentTipZ },
+    };
+    const contact = findLanding(sweep);
+    if (contact === undefined) return;
+    const impactAlpha = landingAlpha(sweep, contact.surfaceY, tuning);
+    if (impactAlpha === undefined) return;
 
     // Launch from the velocity at contact time, not from the end of the fixed step.
     body.vel.y = previousVelY - tuning.GRAVITY_MPS2 * dt * impactAlpha;
-    land(sim, impactY, impactX, impactZ);
+    land(
+        sim,
+        contact.surfaceY,
+        sweep.previousTip.x + (sweep.currentTip.x - sweep.previousTip.x) * impactAlpha,
+        sweep.previousTip.z + (sweep.currentTip.z - sweep.previousTip.z) * impactAlpha,
+    );
 }

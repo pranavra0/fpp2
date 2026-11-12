@@ -1,5 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { createSim, DEFAULT_TUNING, NEUTRAL_CONTROLS, step } from "../src/sim";
+import { Time } from "@dylanebert/shallot";
+import { DEFAULT_TUNING } from "../src/config/gameplay";
+import {
+    createSim,
+    landingAlpha,
+    NEUTRAL_CONTROLS,
+    simulationSubstepCount,
+    step,
+    type LandingQuery,
+} from "../src/sim";
+
+const groundContact: LandingQuery = (sweep) =>
+    landingAlpha(sweep, 0, DEFAULT_TUNING) === undefined ? undefined : { surfaceY: 0 };
+
+function stepOnGround(
+    sim: ReturnType<typeof createSim>,
+    controls = NEUTRAL_CONTROLS,
+): void {
+    step(sim, DEFAULT_TUNING, controls, groundContact);
+}
 
 describe("pogo simulation", () => {
     test("automatically bounces with stable launch height and unique contacts", () => {
@@ -11,7 +30,7 @@ describe("pogo simulation", () => {
         let previousLaunchId = sim.pogo.lastLaunchedContactId;
 
         for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ * 10; tick++) {
-            step(sim);
+            stepOnGround(sim);
             if (sim.pogo.contactId !== previousContactId) {
                 previousContactId = sim.pogo.contactId;
             }
@@ -26,10 +45,12 @@ describe("pogo simulation", () => {
             previousVelocityY = sim.body.vel.y;
         }
 
-        const expectedApex = 1 + DEFAULT_TUNING.LAUNCH_SPEED_MPS ** 2 / (2 * DEFAULT_TUNING.GRAVITY_MPS2);
+        const expectedApex =
+            1 + DEFAULT_TUNING.LAUNCH_SPEED_MPS ** 2 / (2 * DEFAULT_TUNING.GRAVITY_MPS2);
         expect(launchedContacts.size).toBeGreaterThanOrEqual(5);
         expect(apexHeights.length).toBeGreaterThanOrEqual(5);
-        for (const height of apexHeights) expect(Math.abs(height - expectedApex)).toBeLessThanOrEqual(0.001);
+        for (const height of apexHeights)
+            expect(Math.abs(height - expectedApex)).toBeLessThanOrEqual(0.001);
         for (let index = 1; index < apexHeights.length; index++) {
             expect(Math.abs(apexHeights[index]! - apexHeights[index - 1]!)).toBeLessThanOrEqual(0.001);
         }
@@ -39,15 +60,16 @@ describe("pogo simulation", () => {
         const sim = createSim(1.1);
         sim.body.vel.y = -1;
         for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ; tick++) {
-            step(sim);
+            stepOnGround(sim);
             if (sim.pogo.state === "Compression") break;
         }
         expect(sim.pogo.state).toBe("Compression");
 
         const charging = { ...NEUTRAL_CONTROLS, leanX: 1, compress: true };
-        for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ * 0.15; tick++) step(sim, DEFAULT_TUNING, charging);
+        for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ * 0.15; tick++)
+            stepOnGround(sim, charging);
         const carriedVelocity = sim.pogo.carryVelX;
-        step(sim);
+        stepOnGround(sim);
 
         expect(sim.pogo.state).toBe("Airborne");
         expect(sim.body.vel.x).toBeGreaterThan(carriedVelocity);
@@ -58,10 +80,10 @@ describe("pogo simulation", () => {
     test("buffers a charge press during descent", () => {
         const sim = createSim(1.12);
         sim.body.vel.y = -2;
-        step(sim, DEFAULT_TUNING, { ...NEUTRAL_CONTROLS, jumpPressed: true });
+        stepOnGround(sim, { ...NEUTRAL_CONTROLS, jumpPressed: true });
         let launched = false;
         for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ; tick++) {
-            step(sim);
+            stepOnGround(sim);
             if (sim.pogo.lastLaunchedContactId === sim.pogo.contactId) {
                 launched = true;
                 break;
@@ -71,5 +93,13 @@ describe("pogo simulation", () => {
         expect(launched).toBe(true);
         expect(sim.pogo.chargeT).toBeGreaterThan(0);
         expect(sim.pogo.chargeT).toBeLessThan(DEFAULT_TUNING.INPUT_BUFFER_S);
+    });
+
+    test("engine fixed ticks contain only whole 120 Hz simulation steps", () => {
+        expect(simulationSubstepCount(Time.FIXED_DT)).toBe(2);
+        expect(simulationSubstepCount(1 / DEFAULT_TUNING.SIM_HZ)).toBe(1);
+        expect(() => simulationSubstepCount(1 / 90)).toThrow(
+            "the pogo simulation rate must divide the ECS fixed rate",
+        );
     });
 });

@@ -5,9 +5,9 @@
 - Use plain technical wording only. No flavor text, jokes, emojis, themed names, or marketing language in code, comments, logs, or replies.
 - Do exactly the requested task. Do not add unrelated features, files, abstractions, configs, READMEs, or docs.
 - For simulation code, use TypeScript, plain typed objects, and free functions. Do not use classes, inheritance, getters/setters, dependency injection, or event systems.
-- Simulation code must not add rendering, input, camera, UI, engine imports, or a world/collision interface. The floor is hardcoded at y = 0.
+- Simulation code must not import Shallot, rendering, input devices, camera, or UI. It may accept plain typed controls and collision results from engine integration. Keep collision queries and level geometry outside the simulation; keep movement and contact response pure.
 - Comments explain why only. Do not add TODO comments. Use assertions for invariants; do not clamp invalid state to hide it.
-
+- delete every tests except algorithmic logic, boundary IO, and integration flows
 ## Shallot Specific notes
 
 Explore this project's entry, plugins and checks first; reuse its setup.
