@@ -1,20 +1,15 @@
 # Level files
 
-Level definitions are JSON files in `public/levels`. The game loads `prototype.json` by default. Add `?level=alternate` to the development URL to load `alternate.json`; the query value must match both the file name and the level `id`.
+Level definitions are JSON files in `public/levels`. The game loads `first-level.json` by default. Add `?level=prototype` or `?level=alternate` to the development URL to load either sandbox. The query value must match the file name and the level `id`.
 
-## Format version 1
+Each level stores an `id`, a player `spawnPosition`, a `failureBoundaryY`, and an `objects` array. The boundary is a world-space Y value; falling below it respawns the player.
 
-- `formatVersion` is `1`.
-- `id` is a lowercase letter or number followed by lowercase letters, numbers, or hyphens.
-- `spawnPosition` is the player's body center in world coordinates.
-- `objects` contains exactly one object with role `ground`. Other level objects use role `platform`. Every object has a stable, unique `id`.
-- `transform.position` is the object's center in world coordinates. One world unit is one meter, and Y is up.
-- `transform.rotation` is an XYZW unit quaternion. Landing surfaces can rotate around Y; X and Z rotation are rejected because this version models horizontal surfaces.
-- `transform.scale` scales the unit box used by the visual representation. Values must be positive.
-- `visual` selects a box and a material identifier (`ground` or `platform`).
-- `collision` selects a box with local dimensions. Its dimensions are multiplied by the object's transform scale, so `[1, 1, 1]` matches the visual box and other values change collision independently.
-- A surface's top elevation is its center Y plus half its scaled collision height.
+Every object has a stable, unique `id`, a `role`, a transform, a visual, and a collision definition. Positions use world coordinates in meters with Y up. Rotations are XYZW unit quaternions and may turn objects around Y.
 
-To add a platform, copy an object from `prototype.json`, give it a new `id`, set its role to `platform`, and edit its transform, visual material, and collision dimensions. Rendering and collision entities are built from the same object definition.
+- `ground` and `platform` objects use box collision and provide pogo landing surfaces.
+- `goal` and `checkpoint` objects use `trigger-box` collision. These volumes do not block the player. Their position, rotation, scale, and collision dimensions define trigger behavior independently from rendering.
+- Visuals currently use boxes. The material must match the object's role.
+- Collision dimensions are multiplied by transform scale. For trigger objects this defines the gameplay volume; for surfaces it defines landing collision separately from the visual box.
+- A checkpoint's transform position is its respawn position. A level can contain one goal and any number of checkpoints.
 
-Format version 1 supports box visuals and box collision. A future visual asset reference can be added as another `visual` variant while keeping the object's role, transform, and collision data independent.
+The development editor can add, move, resize, duplicate, delete, save, and reload platforms and checkpoints. It can add a goal and edit the failure boundary. Select a trigger to inspect its position and volume size. Trigger boxes are rendered in both editor and play modes.

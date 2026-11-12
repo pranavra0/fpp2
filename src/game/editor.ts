@@ -18,8 +18,8 @@ import {
 import { viewportToWorld } from "@dylanebert/shallot/rendering";
 import { castRayClosest, emptyQueryHit } from "@dylanebert/shallot/standard/physics";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
-import { loadLevel, parseLevelDefinition, type LevelDefinition, type LevelObjectDefinition, type Vec3Tuple } from "../content/level";
-import { activeLevel, resetPlayerToSpawn, runtime } from "./state";
+import { loadLevel, parseLevelDefinition, type LevelDefinition, type LevelMaterial, type LevelObjectDefinition, type Vec3Tuple } from "../content/level";
+import { activeLevel, runtime } from "./state";
 import {
     addLevelObjectPhysics,
     destroyLevelEntities,
@@ -28,8 +28,8 @@ import {
 } from "./physics";
 import { addLevelRendering } from "./level-rendering";
 import { editorState, isEditing, type CameraSettings, type EditorDrag, type EditorState, type TransformAxis } from "./editor-state";
-import { updateLandingMarker, writePose } from "./presentation";
 import type { Vec3 } from "../vec";
+import { resetGameplayToSpawn } from "./gameplay-system";
 
 const HISTORY_LIMIT = 50;
 const DRAG_DISTANCE = 100;
@@ -43,6 +43,24 @@ function cloneLevel(level: LevelDefinition): LevelDefinition {
 
 function point(position: Vec3Tuple): Vec3 {
     return { x: position[0], y: position[1], z: position[2] };
+}
+
+function displayedScale(object: LevelObjectDefinition): Vec3Tuple {
+    if (object.collision.kind !== "trigger-box") return object.transform.scale;
+    return [
+        object.transform.scale[0] * object.collision.dimensions[0],
+        object.transform.scale[1] * object.collision.dimensions[1],
+        object.transform.scale[2] * object.collision.dimensions[2],
+    ];
+}
+
+function authoredScale(object: LevelObjectDefinition, displayed: Vec3Tuple): Vec3Tuple {
+    if (object.collision.kind !== "trigger-box") return displayed;
+    return [
+        displayed[0] / object.collision.dimensions[0],
+        displayed[1] / object.collision.dimensions[1],
+        displayed[2] / object.collision.dimensions[2],
+    ];
 }
 
 function sameLevel(a: LevelDefinition, b: LevelDefinition): boolean {
@@ -107,6 +125,7 @@ function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
     if (editor.selectedId !== null && editor.selectedId !== "spawn" && !objectFor(level, editor.selectedId))
         editor.selectedId = null;
     syncSpawnMarker(world, level.spawnPosition);
+    updateFailureMarker(world, level.failureBoundaryY);
     updateSelectionOutline(world);
     if (refresh) editor.refreshUi = true;
 }
@@ -123,6 +142,12 @@ function updateSpawnMarker(world: World, spawn: Vec3Tuple): void {
 
 function syncSpawnMarker(world: World, spawn: Vec3Tuple): void {
     updateSpawnMarker(world, spawn);
+}
+
+function updateFailureMarker(world: World, failureBoundaryY: number): void {
+    const eid = world.resource(editorState).failureMarker;
+    if (!eid) return;
+    world.storage(Transform).translation.set(eid, 0, failureBoundaryY, 0);
 }
 
 function removeOutline(world: World, id: string | null): void {
@@ -194,6 +219,8 @@ function setMode(world: World, mode: "edit" | "play"): void {
         requirePointerLock(world, false);
         releasePointerLock(world);
         hideGameplayVisuals(world);
+        world.storage(Transform).scale.set(editor.spawnMarker, 0.28, 1.1, 0.28);
+        world.storage(Transform).scale.set(editor.failureMarker, 28, 0.035, 24);
         updateSelectionOutline(world);
         setStatus(editor, "");
         refreshMountedUi(world);
@@ -206,9 +233,9 @@ function setMode(world: World, mode: "edit" | "play"): void {
     editor.mode = "play";
     world.remove(editor.camera, Camera);
     world.add(game.camera, Camera, editor.gameCameraSettings ?? editor.editorCameraSettings);
-    resetPlayerToSpawn(game);
-    writePose(world, game);
-    updateLandingMarker(world, game);
+    resetGameplayToSpawn(world);
+    world.storage(Transform).scale.set(editor.spawnMarker, 0, 0, 0);
+    world.storage(Transform).scale.set(editor.failureMarker, 0, 0, 0);
     requirePointerLock(world, true);
     setStatus(editor, "");
     refreshMountedUi(world);
@@ -285,6 +312,48 @@ function raySphereDistance(
     return far >= 0 ? far : undefined;
 }
 
+function rayTriggerDistance(
+    origin: readonly [number, number, number],
+    direction: readonly [number, number, number],
+    object: LevelObjectDefinition,
+): number | undefined {
+    if (object.collision.kind !== "trigger-box") return undefined;
+    const rotationY = 2 * Math.atan2(object.transform.rotation[1], object.transform.rotation[3]);
+    const cosine = Math.cos(rotationY);
+    const sine = Math.sin(rotationY);
+    const dx = origin[0] - object.transform.position[0];
+    const dz = origin[2] - object.transform.position[2];
+    const localOrigin = [
+        cosine * dx - sine * dz,
+        origin[1] - object.transform.position[1],
+        sine * dx + cosine * dz,
+    ];
+    const localDirection = [
+        cosine * direction[0] - sine * direction[2],
+        direction[1],
+        sine * direction[0] + cosine * direction[2],
+    ];
+    const half = object.transform.scale.map(
+        (scale, axis) => scale * object.collision.dimensions[axis]! * 0.5,
+    );
+    let enter = 0;
+    let exit = DRAG_DISTANCE;
+    for (let axis = 0; axis < 3; axis++) {
+        const delta = localDirection[axis]!;
+        if (Math.abs(delta) < 1e-8) {
+            if (localOrigin[axis]! < -half[axis]! || localOrigin[axis]! > half[axis]!)
+                return undefined;
+            continue;
+        }
+        const first = (-half[axis]! - localOrigin[axis]!) / delta;
+        const second = (half[axis]! - localOrigin[axis]!) / delta;
+        enter = Math.max(enter, Math.min(first, second));
+        exit = Math.min(exit, Math.max(first, second));
+        if (enter > exit) return undefined;
+    }
+    return exit >= 0 && enter <= DRAG_DISTANCE ? Math.max(0, enter) : undefined;
+}
+
 function pick(world: World, x: number, y: number): string | null {
     const editor = world.resource(editorState);
     const game = world.resource(runtime);
@@ -304,10 +373,27 @@ function pick(world: World, x: number, y: number): string | null {
         { x: direction.x * DRAG_DISTANCE, y: direction.y * DRAG_DISTANCE, z: direction.z * DRAG_DISTANCE },
         HIT,
     );
-    const surfaceDistance = hasSurface ? HIT.fraction * DRAG_DISTANCE : Number.POSITIVE_INFINITY;
-    if (spawnDistance !== undefined && spawnDistance < surfaceDistance) return "spawn";
-    if (!hasSurface) return null;
-    return game.levelEntities.find((entity) => entity.eid === HIT.body)?.id ?? null;
+    let selectedId: string | null = null;
+    let selectedDistance = Number.POSITIVE_INFINITY;
+    if (spawnDistance !== undefined) {
+        selectedId = "spawn";
+        selectedDistance = spawnDistance;
+    }
+    if (hasSurface) {
+        const surfaceId = game.levelEntities.find((entity) => entity.eid === HIT.body)?.id;
+        if (surfaceId !== undefined) {
+            selectedId = surfaceId;
+            selectedDistance = HIT.fraction * DRAG_DISTANCE;
+        }
+    }
+    for (const object of activeLevel(game).objects) {
+        const distance = rayTriggerDistance(ray.origin, ray.dir, object);
+        if (distance !== undefined && distance < selectedDistance) {
+            selectedId = object.id;
+            selectedDistance = distance;
+        }
+    }
+    return selectedId;
 }
 
 function intersectPlane(
@@ -353,7 +439,7 @@ function beginDrag(world: World, id: string, x: number, y: number): void {
     const planeNormal = cameraForward(editor);
     const startPoint = intersectPlane(ray, position, planeNormal);
     if (!startPoint) return;
-    const objectScale = object ? point(object.transform.scale) : { x: 1, y: 1, z: 1 };
+    const objectScale = object ? point(displayedScale(object)) : { x: 1, y: 1, z: 1 };
     editor.dragging = {
         objectId: id,
         mode: editor.transformMode,
@@ -426,11 +512,12 @@ function applyDrag(world: World, x: number, y: number): void {
         z: -sine * delta.x + cosine * delta.z,
     };
     const sizeDelta = constrained(localDelta, drag.axis);
-    const scale: Vec3Tuple = [
+    const displayed: Vec3Tuple = [
         Math.max(MIN_OBJECT_SIZE, drag.objectScale.x + sizeDelta.x),
         Math.max(MIN_OBJECT_SIZE, drag.objectScale.y + sizeDelta.y),
         Math.max(MIN_OBJECT_SIZE, drag.objectScale.z + sizeDelta.z),
     ];
+    const scale = authoredScale(object, displayed);
     if (scale.some((value, index) => value !== object.transform.scale[index])) {
         setObject(world, object.id, { ...object, transform: { ...object.transform, scale } });
         drag.changed = true;
@@ -466,11 +553,14 @@ function setProperty(world: World, property: "position" | "scale", axis: 0 | 1 |
     }
     const object = selectedObject(world);
     if (!object) return;
-    const values = [...object.transform[property]] as [number, number, number];
+    const values = (property === "scale" ? [...displayedScale(object)] : [...object.transform.position]) as [number, number, number];
     values[axis] = value;
+    const nextValues = property === "scale"
+        ? authoredScale(object, values)
+        : values;
     const nextObject: LevelObjectDefinition = {
         ...object,
-        transform: { ...object.transform, [property]: values },
+        transform: { ...object.transform, [property]: nextValues },
     };
     const next: LevelDefinition = {
         ...level,
@@ -479,24 +569,34 @@ function setProperty(world: World, property: "position" | "scale", axis: 0 | 1 |
     changedLevel(world, next, before);
 }
 
-function nextObjectId(level: LevelDefinition, base = "platform"): string {
+function nextObjectId(level: LevelDefinition, base: string): string {
     const ids = new Set(level.objects.map((object) => object.id));
     let index = 1;
     while (ids.has(`${base}-${index}`)) index++;
     return `${base}-${index}`;
 }
 
-function addPlatform(world: World, duplicateId?: string): void {
+function addObject(
+    world: World,
+    role: LevelMaterial,
+    duplicateId?: string,
+): void {
     const editor = world.resource(editorState);
     const level = activeLevel(world.resource(runtime));
     const source = duplicateId ? objectFor(level, duplicateId) : undefined;
-    if (duplicateId && (!source || source.role !== "platform")) return;
-    const id = nextObjectId(level);
-    const target = source ?? level.objects.find((object) => object.role === "platform");
+    if (duplicateId && (!source || source.role !== role || role === "goal")) return;
+    if (role === "goal" && level.objects.some((object) => object.role === "goal")) {
+        setStatus(editor, "This level already has a goal");
+        refreshMountedUi(world);
+        return;
+    }
+    const id = nextObjectId(level, role);
+    const target = source ?? level.objects.find((object) => object.role === role) ??
+        level.objects.find((object) => object.role === "platform");
     const position: Vec3Tuple = target
-        ? [target.transform.position[0] + 1, target.transform.position[1] + (source ? 0 : 2), target.transform.position[2]]
-        : [level.spawnPosition[0] + 2, level.spawnPosition[1] + 2, level.spawnPosition[2]];
-    const platform: LevelObjectDefinition = source
+        ? [target.transform.position[0] + 2, target.transform.position[1] + (source ? 0 : 1.5), target.transform.position[2]]
+        : [level.spawnPosition[0] + 2, level.spawnPosition[1], level.spawnPosition[2]];
+    const object: LevelObjectDefinition = source
         ? {
               ...structuredClone(source),
               id,
@@ -505,15 +605,31 @@ function addPlatform(world: World, duplicateId?: string): void {
                   position,
               },
           }
-        : {
-              id,
-              role: "platform",
-              transform: { position, rotation: [0, 0, 0, 1], scale: [3, 0.4, 3] },
-              visual: { kind: "box", material: "platform" },
-              collision: { kind: "box", dimensions: [1, 1, 1] },
-          };
+        : role === "ground" || role === "platform"
+          ? {
+                id,
+                role,
+                transform: {
+                    position,
+                    rotation: [0, 0, 0, 1],
+                    scale: role === "ground" ? [28, 1, 24] : [3, 0.4, 3],
+                },
+                visual: { kind: "box", material: role },
+                collision: { kind: "box", dimensions: [1, 1, 1] },
+            }
+          : {
+                id,
+                role,
+                transform: {
+                    position,
+                    rotation: [0, 0, 0, 1],
+                    scale: role === "goal" ? [1.8, 2.4, 1.8] : [1.2, 1.8, 1.2],
+                },
+                visual: { kind: "box", material: role },
+                collision: { kind: "trigger-box", dimensions: [1, 1, 1] },
+            };
     const before = cloneLevel(level);
-    const next = { ...level, objects: [...level.objects, platform] };
+    const next = { ...level, objects: [...level.objects, object] };
     changedLevel(world, next, before);
     select(world, id);
     setStatus(editor, "");
@@ -522,14 +638,18 @@ function addPlatform(world: World, duplicateId?: string): void {
 
 function duplicateSelected(world: World): void {
     const editor = world.resource(editorState);
-    if (editor.selectedId) addPlatform(world, editor.selectedId);
+    const object = editor.selectedId
+        ? objectFor(activeLevel(world.resource(runtime)), editor.selectedId)
+        : undefined;
+    if (object && (object.role === "platform" || object.role === "checkpoint"))
+        addObject(world, object.role, editor.selectedId ?? undefined);
 }
 
 function deleteSelected(world: World): void {
     const editor = world.resource(editorState);
     const level = activeLevel(world.resource(runtime));
     const object = editor.selectedId ? objectFor(level, editor.selectedId) : undefined;
-    if (!object || object.role !== "platform") return;
+    if (!object || object.role === "ground") return;
     const before = cloneLevel(level);
     const next = { ...level, objects: level.objects.filter((entry) => entry.id !== object.id) };
     removeOutline(world, editor.selectedId);
@@ -537,6 +657,20 @@ function deleteSelected(world: World): void {
     changedLevel(world, next, before);
     setStatus(editor, "");
     refreshMountedUi(world);
+}
+
+function setFailureBoundary(world: World, value: number): void {
+    const editor = world.resource(editorState);
+    const level = activeLevel(world.resource(runtime));
+    const checkpointBelowBoundary = level.objects.some(
+        (object) => object.role === "checkpoint" && object.transform.position[1] <= value,
+    );
+    if (!Number.isFinite(value) || value >= level.spawnPosition[1] || checkpointBelowBoundary) {
+        setStatus(editor, "Failure boundary must be below the spawn and checkpoint positions");
+        refreshMountedUi(world);
+        return;
+    }
+    changedLevel(world, { ...level, failureBoundaryY: value }, cloneLevel(level));
 }
 
 function focusSelection(world: World): void {
@@ -583,6 +717,7 @@ async function loadProjectLevel(world: World, id: string): Promise<void> {
         const level = await loadLevel(id);
         select(world, null);
         replaceLevel(world, level);
+        resetGameplayToSpawn(world);
         editor.undo.length = 0;
         editor.redo.length = 0;
         editor.saved = cloneLevel(level);
@@ -611,9 +746,9 @@ function createLevel(world: World, id: string): void {
     }
     if (!confirmDiscard(editor, current)) return;
     const level: LevelDefinition = {
-        formatVersion: 1,
         id: normalizedId,
         spawnPosition: [0, 2, 0],
+        failureBoundaryY: -8,
         objects: [
             {
                 id: "ground",
@@ -695,7 +830,7 @@ function handleEditorKeys(world: World, editor: EditorState): void {
     }
     if (keys.pressed.has("Escape")) select(world, null);
     if (keys.pressed.has("Delete") || keys.pressed.has("Backspace")) deleteSelected(world);
-    if (keys.pressed.has("KeyP")) addPlatform(world);
+    if (keys.pressed.has("KeyP")) addObject(world, "platform");
     if (keys.pressed.has("KeyF")) focusSelection(world);
     if (keys.pressed.has("KeyG")) editor.transformMode = "move";
     if (keys.pressed.has("KeyR")) editor.transformMode = "resize";
@@ -897,9 +1032,9 @@ function renderProperties(world: World, root: HTMLElement): void {
     const sizeFields = document.createElement("div");
     sizeFields.className = "editor-fields";
     sizeFields.append(
-        numericField(world, "Width", "scale", 0, object.transform.scale[0]),
-        numericField(world, "Height", "scale", 1, object.transform.scale[1]),
-        numericField(world, "Depth", "scale", 2, object.transform.scale[2]),
+        numericField(world, "Width", "scale", 0, displayedScale(object)[0]),
+        numericField(world, "Height", "scale", 1, displayedScale(object)[1]),
+        numericField(world, "Depth", "scale", 2, displayedScale(object)[2]),
     );
     size.append(sizeFields);
     panel.append(size);
@@ -924,13 +1059,16 @@ function refreshUi(world: World, root: HTMLElement): void {
     root.querySelector<HTMLSelectElement>("[data-axis]")!.value = editor.transformAxis;
     root.querySelector<HTMLSelectElement>("[data-snap]")!.value = String(editor.snap);
     root.querySelector<HTMLInputElement>("[data-speed]")!.value = String(editor.cameraSpeed);
+    root.querySelector<HTMLInputElement>("[data-failure-boundary]")!.value = String(level.failureBoundaryY);
     button(root, "undo").disabled = editor.undo.length === 0;
     button(root, "redo").disabled = editor.redo.length === 0;
     const selected = selectedObject(world);
-    const platformSelected = selected?.role === "platform";
-    button(root, "duplicate").disabled = !platformSelected;
-    button(root, "delete").disabled = !platformSelected;
-    button(root, "create").disabled = editor.mode !== "edit";
+    const duplicateable = selected?.role === "platform" || selected?.role === "checkpoint";
+    const deletable = selected !== undefined && selected.role !== "ground";
+    button(root, "duplicate").disabled = !duplicateable;
+    button(root, "delete").disabled = !deletable;
+    for (const action of ["create-platform", "create-goal", "create-checkpoint"])
+        button(root, action).disabled = editor.mode !== "edit";
     button(root, "new").disabled = editor.mode !== "edit";
     button(root, "save").disabled = editor.mode !== "edit" || !dirty(editor, level);
     for (const control of root.querySelectorAll<HTMLInputElement | HTMLSelectElement>(".editor-content input,.editor-content select"))
@@ -955,10 +1093,12 @@ function mountEditorUi(world: World): HTMLElement {
           <span class="editor-title">Level</span>
           <div class="editor-row"><select aria-label="Level" data-level-select></select><button data-action="load">Load</button></div>
           <div class="editor-row"><input aria-label="New level ID" data-new-id placeholder="New ID"><button data-action="new">New</button><button data-action="save">Save</button></div>
+          <label>Fail below Y<input data-failure-boundary type="number" step="0.5"></label>
         </section>
         <section class="editor-section" data-panel="objects">
           <span class="editor-title">Objects</span>
-          <div class="editor-actions"><button data-action="create">Add platform</button><button data-action="duplicate">Duplicate</button><button data-action="delete">Delete</button></div>
+          <div class="editor-actions"><button data-action="create-platform">Add platform</button><button data-action="create-goal">Add goal</button><button data-action="create-checkpoint">Add checkpoint</button></div>
+          <div class="editor-actions"><button data-action="duplicate">Duplicate</button><button data-action="delete">Delete</button></div>
           <div class="editor-actions"><button data-action="undo">Undo</button><button data-action="redo">Redo</button></div>
         </section>
         <section class="editor-section" data-panel="transform">
@@ -981,7 +1121,9 @@ function mountEditorUi(world: World): HTMLElement {
         const editor = world.resource(editorState);
         setMode(world, isEditing(editor) ? "play" : "edit");
     });
-    button(root, "create").addEventListener("click", () => addPlatform(world));
+    button(root, "create-platform").addEventListener("click", () => addObject(world, "platform"));
+    button(root, "create-goal").addEventListener("click", () => addObject(world, "goal"));
+    button(root, "create-checkpoint").addEventListener("click", () => addObject(world, "checkpoint"));
     button(root, "duplicate").addEventListener("click", () => duplicateSelected(world));
     button(root, "delete").addEventListener("click", () => deleteSelected(world));
     button(root, "undo").addEventListener("click", () => undo(world));
@@ -1009,6 +1151,10 @@ function mountEditorUi(world: World): HTMLElement {
         if (Number.isFinite(value) && value > 0) world.resource(editorState).cameraSpeed = value;
         world.resource(editorState).refreshUi = true;
     });
+    root.querySelector<HTMLInputElement>("[data-failure-boundary]")!.addEventListener("change", (event) => {
+        setFailureBoundary(world, Number((event.currentTarget as HTMLInputElement).value));
+        refreshMountedUi(world);
+    });
     const canvas = document.querySelector("canvas");
     const blurEditorControl = (event: PointerEvent): void => {
         if (event.target !== canvas) return;
@@ -1035,7 +1181,7 @@ const EditorUi = {
 
 export function initializeEditor(
     world: World,
-    materials: Record<"ground" | "platform", MaterialHandle>,
+    materials: Record<LevelMaterial, MaterialHandle>,
 ): void {
     const editor = world.resource(editorState);
     const level = activeLevel(world.resource(runtime));
@@ -1058,10 +1204,27 @@ export function initializeEditor(
     editor.spawnMarker = world.create();
     world.add(editor.spawnMarker, Transform, {
         translation: [level.spawnPosition[0], level.spawnPosition[1] + 0.55, level.spawnPosition[2]],
-        scale: [0.28, 1.1, 0.28],
+        scale: [0, 0, 0],
     });
     world.add(editor.spawnMarker, MeshInstance);
     world.add(editor.spawnMarker, MeshMaterial, spawnMarkerMaterial);
+    editor.failureMarker = world.create();
+    world.add(editor.failureMarker, Transform, {
+        translation: [0, level.failureBoundaryY, 0],
+        scale: [0, 0, 0],
+    });
+    world.add(editor.failureMarker, MeshInstance);
+    world.add(
+        editor.failureMarker,
+        MeshMaterial,
+        world.resource(Materials).add(
+            StandardMaterial({
+                baseColor: [0.75, 0.2, 0.16, 1],
+                emissive: [0.12, 0.01, 0.01],
+                perceptualRoughness: 0.8,
+            }),
+        ),
+    );
     const root = mountEditorUi(world);
     world.addSystem(EditorInput);
     world.addSystem(EditorCameraPose);
@@ -1072,6 +1235,7 @@ export function initializeEditor(
         world.removeSystem(EditorUi);
         root.remove();
         if (world.has(editor.spawnMarker, Outline)) world.remove(editor.spawnMarker, Outline);
+        if (world.has(editor.failureMarker, Outline)) world.remove(editor.failureMarker, Outline);
     });
     void refreshLevelIds(editor);
     refreshUi(world, root);

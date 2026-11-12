@@ -1,7 +1,9 @@
-import { Devices, type World } from "@dylanebert/shallot";
+import { Devices, requestPointerLock, type World } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
 import { editorState, isEditing } from "./editor-state";
-import { resetPlayerToSpawn, runtime } from "./state";
+import { runtime } from "./state";
+import { gameplayProgress } from "./gameplay-state";
+import { restartGameplay } from "./gameplay-system";
 
 export const ReadControls = {
     name: "PogoControls",
@@ -24,7 +26,29 @@ export const ReadControls = {
             return;
         }
         const active = devices.enabled;
-        if (active && devices.keys.pressed.has("KeyR")) resetPlayerToSpawn(state);
+        const progress = world.resource(gameplayProgress);
+        if (active && devices.keys.pressed.has("KeyR")) {
+            const completed = progress.mode === "complete";
+            const fromStart =
+                completed ||
+                held.has("ShiftLeft") ||
+                held.has("ShiftRight");
+            restartGameplay(world, fromStart);
+            if (completed) requestPointerLock(world);
+            return;
+        }
+        if (progress.mode !== "active") {
+            Object.assign(state.controls, {
+                leanX: 0,
+                leanZ: 0,
+                compress: false,
+                jumpPressed: false,
+                extend: false,
+                retract: false,
+            });
+            state.pendingJumpPress = false;
+            return;
+        }
         const controls = state.controls;
         if (active && devices.pointer.lock.status === "locked") {
             state.cameraYaw -=

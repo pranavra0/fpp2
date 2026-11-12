@@ -2,6 +2,7 @@ import {
     Camera,
     DirectionalLight,
     GlobalAmbientLight,
+    Listener,
     lookAtRotation,
     Materials,
     MeshInstance,
@@ -14,6 +15,7 @@ import {
     type World,
 } from "@dylanebert/shallot";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
+import { initializeGameAudio } from "./audio";
 import { CAMERA_TUNING } from "../config/camera";
 import { loadLevel } from "../content/level";
 import { addLevelPhysics } from "./physics";
@@ -21,6 +23,8 @@ import { addLevelRendering } from "./level-rendering";
 import { predictLanding } from "./presentation";
 import { cameraPosition } from "./camera";
 import { activeLevel, resetPlayerToSpawn, runtime } from "./state";
+import { initializeGameplay } from "./gameplay-system";
+import { initializeGameplayHud } from "./hud";
 
 function box(
     world: World,
@@ -40,7 +44,7 @@ export async function initializeGame(world: World): Promise<void> {
     world.onDispose(() => releasePointerLock(world));
 
     const state = world.resource(runtime);
-    const selectedLevel = new URLSearchParams(window.location.search).get("level") ?? "prototype";
+    const selectedLevel = new URLSearchParams(window.location.search).get("level") ?? "first-level";
     state.level = await loadLevel(selectedLevel);
     resetPlayerToSpawn(state);
     const levelDefinition = activeLevel(state);
@@ -66,6 +70,7 @@ export async function initializeGame(world: World): Promise<void> {
         clearColor: 0x101827,
     });
     world.add(camera, StandardRenderer);
+    world.add(camera, Listener);
     world.add(camera, Transform, {
         translation: [initialCameraPosition.x, initialCameraPosition.y, initialCameraPosition.z],
         rotation: lookAtRotation(
@@ -85,6 +90,27 @@ export async function initializeGame(world: World): Promise<void> {
     const platformMaterial = materials.add(
         StandardMaterial({ baseColor: [0.28, 0.39, 0.5, 1], perceptualRoughness: 0.72 }),
     );
+    const goalMaterial = materials.add(
+        StandardMaterial({
+            baseColor: [0.1, 0.78, 0.65, 1],
+            emissive: [0.02, 0.35, 0.23],
+            perceptualRoughness: 0.5,
+        }),
+    );
+    const checkpointMaterial = materials.add(
+        StandardMaterial({
+            baseColor: [0.18, 0.58, 0.88, 1],
+            emissive: [0.025, 0.15, 0.4],
+            perceptualRoughness: 0.5,
+        }),
+    );
+    const activeCheckpointMaterial = materials.add(
+        StandardMaterial({
+            baseColor: [0.38, 0.86, 0.28, 1],
+            emissive: [0.12, 0.42, 0.035],
+            perceptualRoughness: 0.45,
+        }),
+    );
     const bodyMaterial = materials.add(
         StandardMaterial({ baseColor: [0.95, 0.74, 0.24, 1], perceptualRoughness: 0.48 }),
     );
@@ -99,8 +125,17 @@ export async function initializeGame(world: World): Promise<void> {
     addLevelRendering(world, levelObjects, {
         ground: groundMaterial,
         platform: platformMaterial,
+        goal: goalMaterial,
+        checkpoint: checkpointMaterial,
     });
     state.levelEntities = levelObjects;
+    state.levelMaterials = {
+        ground: groundMaterial.material,
+        platform: platformMaterial.material,
+        goal: goalMaterial.material,
+        checkpoint: checkpointMaterial.material,
+    };
+    state.activeCheckpointMaterial = activeCheckpointMaterial.material;
 
     const { x, y, z } = state.sim.body.pos;
     const body = box(world, bodyMaterial, [x, y, z], [0.65, 0.82, 0.65]);
@@ -147,12 +182,17 @@ export async function initializeGame(world: World): Promise<void> {
         validLandingMarker,
         uncertainLandingMarker,
     });
+    initializeGameAudio(world);
+    initializeGameplay(world);
 
     if (import.meta.env?.DEV === true) {
         const { initializeEditor } = await import("./editor");
         initializeEditor(world, {
             ground: groundMaterial,
             platform: platformMaterial,
+            goal: goalMaterial,
+            checkpoint: checkpointMaterial,
         });
     }
+    initializeGameplayHud(world);
 }

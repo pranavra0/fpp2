@@ -1,36 +1,41 @@
 export type Vec3Tuple = readonly [number, number, number];
 export type QuaternionTuple = readonly [number, number, number, number];
-export type LevelMaterial = "ground" | "platform";
-export type LevelObjectRole = "ground" | "platform";
+export type LevelObjectRole = "ground" | "platform" | "goal" | "checkpoint";
+export type LevelMaterial = LevelObjectRole;
 
-export type LevelObjectDefinition = {
+type LevelObjectBase = {
     id: string;
-    role: LevelObjectRole;
     transform: {
         position: Vec3Tuple;
         rotation: QuaternionTuple;
         scale: Vec3Tuple;
     };
-    visual: {
-        kind: "box";
-        material: LevelMaterial;
-    };
-    collision: {
-        kind: "box";
-        dimensions: Vec3Tuple;
-    };
 };
 
+export type LevelSurfaceObjectDefinition = LevelObjectBase & {
+    role: "ground" | "platform";
+    visual: { kind: "box"; material: "ground" | "platform" };
+    collision: { kind: "box"; dimensions: Vec3Tuple };
+};
+
+export type LevelTriggerObjectDefinition = LevelObjectBase & {
+    role: "goal" | "checkpoint";
+    visual: { kind: "box"; material: "goal" | "checkpoint" };
+    collision: { kind: "trigger-box"; dimensions: Vec3Tuple };
+};
+
+export type LevelObjectDefinition = LevelSurfaceObjectDefinition | LevelTriggerObjectDefinition;
+
 export type LevelDefinition = {
-    formatVersion: 1;
     id: string;
     spawnPosition: Vec3Tuple;
+    failureBoundaryY: number;
     objects: readonly LevelObjectDefinition[];
 };
 
 export type LevelSurface = {
     id: string;
-    role: LevelObjectRole;
+    role: "ground" | "platform";
     centerX: number;
     centerZ: number;
     rotationY: number;
@@ -50,16 +55,12 @@ function record(value: unknown, path: string): Record<string, unknown> {
     return value as Record<string, unknown>;
 }
 
-function exactKeys(
-    value: Record<string, unknown>,
-    path: string,
-    keys: readonly string[],
-): void {
+function exactKeys(value: Record<string, unknown>, path: string, keys: readonly string[]): void {
     for (const key of keys) {
         if (!(key in value)) invalid(`${path}.${key}`, "is required");
     }
     for (const key of Object.keys(value)) {
-        if (!keys.includes(key)) invalid(`${path}.${key}`, "is not supported by format version 1");
+        if (!keys.includes(key)) invalid(`${path}.${key}`, "is not supported");
     }
 }
 
@@ -69,11 +70,7 @@ function string(value: unknown, path: string): string {
     return value;
 }
 
-function tuple<T extends readonly number[]>(
-    value: unknown,
-    length: number,
-    path: string,
-): T {
+function tuple<T extends readonly number[]>(value: unknown, length: number, path: string): T {
     if (!Array.isArray(value) || value.length !== length)
         return invalid(path, `expected an array of ${length} numbers`);
     for (let index = 0; index < length; index++) {
@@ -91,85 +88,96 @@ function positiveTuple(value: unknown, path: string): Vec3Tuple {
     return result;
 }
 
+function parseTransform(value: unknown, path: string): LevelObjectBase["transform"] {
+    const input = record(value, path);
+    exactKeys(input, path, ["position", "rotation", "scale"]);
+    const position = tuple<Vec3Tuple>(input.position, 3, `${path}.position`);
+    const rotation = tuple<QuaternionTuple>(input.rotation, 4, `${path}.rotation`);
+    const rotationLength = Math.hypot(...rotation);
+    if (Math.abs(rotationLength - 1) > 1e-4)
+        invalid(`${path}.rotation`, "must be a unit quaternion");
+    if (Math.abs(rotation[0]) > 1e-6 || Math.abs(rotation[2]) > 1e-6)
+        invalid(`${path}.rotation`, "level objects may rotate around Y only");
+    return {
+        position,
+        rotation,
+        scale: positiveTuple(input.scale, `${path}.scale`),
+    };
+}
+
 function parseObject(value: unknown, path: string): LevelObjectDefinition {
     const input = record(value, path);
     exactKeys(input, path, ["id", "role", "transform", "visual", "collision"]);
-
     const id = string(input.id, `${path}.id`);
     const role = input.role;
-    if (role !== "ground" && role !== "platform")
-        invalid(`${path}.role`, 'expected "ground" or "platform"');
-
-    const transformInput = record(input.transform, `${path}.transform`);
-    exactKeys(transformInput, `${path}.transform`, ["position", "rotation", "scale"]);
-    const position = tuple<Vec3Tuple>(
-        transformInput.position,
-        3,
-        `${path}.transform.position`,
-    );
-    const rotation = tuple<QuaternionTuple>(
-        transformInput.rotation,
-        4,
-        `${path}.transform.rotation`,
-    );
-    const rotationLength = Math.hypot(...rotation);
-    if (Math.abs(rotationLength - 1) > 1e-4)
-        invalid(`${path}.transform.rotation`, "must be a unit quaternion");
-    if (Math.abs(rotation[0]) > 1e-6 || Math.abs(rotation[2]) > 1e-6)
-        invalid(`${path}.transform.rotation`, "level surfaces may rotate around Y only");
-    const scale = positiveTuple(transformInput.scale, `${path}.transform.scale`);
-
+    if (role !== "ground" && role !== "platform" && role !== "goal" && role !== "checkpoint")
+        invalid(`${path}.role`, 'expected "ground", "platform", "goal", or "checkpoint"');
+    const transform = parseTransform(input.transform, `${path}.transform`);
     const visualInput = record(input.visual, `${path}.visual`);
     exactKeys(visualInput, `${path}.visual`, ["kind", "material"]);
-    if (visualInput.kind !== "box")
-        invalid(`${path}.visual.kind`, 'expected "box"');
-    if (visualInput.material !== "ground" && visualInput.material !== "platform")
-        invalid(`${path}.visual.material`, 'expected "ground" or "platform"');
-
+    if (visualInput.kind !== "box") invalid(`${path}.visual.kind`, 'expected "box"');
+    if (visualInput.material !== role)
+        invalid(`${path}.visual.material`, `must match role "${role}"`);
     const collisionInput = record(input.collision, `${path}.collision`);
     exactKeys(collisionInput, `${path}.collision`, ["kind", "dimensions"]);
-    if (collisionInput.kind !== "box")
-        invalid(`${path}.collision.kind`, 'expected "box"');
-    const dimensions = positiveTuple(
-        collisionInput.dimensions,
-        `${path}.collision.dimensions`,
-    );
-
+    const trigger = role === "goal" || role === "checkpoint";
+    if (collisionInput.kind !== (trigger ? "trigger-box" : "box"))
+        invalid(
+            `${path}.collision.kind`,
+            trigger ? 'expected "trigger-box" for non-solid gameplay objects' : 'expected "box" for solid surfaces',
+        );
+    const dimensions = positiveTuple(collisionInput.dimensions, `${path}.collision.dimensions`);
+    if (trigger) {
+        return {
+            id,
+            role,
+            transform,
+            visual: { kind: "box", material: role },
+            collision: { kind: "trigger-box", dimensions },
+        };
+    }
     return {
         id,
         role,
-        transform: { position, rotation, scale },
-        visual: { kind: "box", material: visualInput.material },
+        transform,
+        visual: { kind: "box", material: role },
         collision: { kind: "box", dimensions },
     };
 }
 
 export function parseLevelDefinition(value: unknown): LevelDefinition {
     const input = record(value, "level");
-    exactKeys(input, "level", ["formatVersion", "id", "spawnPosition", "objects"]);
-    if (input.formatVersion !== 1)
-        invalid("level.formatVersion", "expected supported version 1");
-
+    exactKeys(input, "level", ["id", "spawnPosition", "failureBoundaryY", "objects"]);
     const id = string(input.id, "level.id");
     if (!/^[a-z0-9][a-z0-9-]*$/.test(id))
         invalid("level.id", "must use lowercase letters, numbers, and hyphens");
     const spawnPosition = tuple<Vec3Tuple>(input.spawnPosition, 3, "level.spawnPosition");
+    const failureBoundaryY = input.failureBoundaryY;
+    if (typeof failureBoundaryY !== "number" || !Number.isFinite(failureBoundaryY))
+        invalid("level.failureBoundaryY", "expected a finite number");
+    if (failureBoundaryY >= spawnPosition[1])
+        invalid("level.failureBoundaryY", "must be below the spawn position");
     if (!Array.isArray(input.objects)) invalid("level.objects", "expected an array");
-
     const objects = input.objects.map((object, index) =>
         parseObject(object, `level.objects[${index}]`),
     );
     const objectIds = new Set<string>();
     let groundCount = 0;
+    let goalCount = 0;
     for (const object of objects) {
         if (objectIds.has(object.id))
             invalid("level.objects", `duplicate object id "${object.id}"`);
         objectIds.add(object.id);
         if (object.role === "ground") groundCount++;
+        if (object.role === "goal") goalCount++;
     }
     if (groundCount !== 1) invalid("level.objects", "must contain exactly one ground object");
-
-    return { formatVersion: 1, id, spawnPosition, objects };
+    if (goalCount > 1) invalid("level.objects", "may contain at most one goal object");
+    for (const object of objects) {
+        if (object.role === "checkpoint" && object.transform.position[1] <= failureBoundaryY)
+            invalid(`level.objects.${object.id}`, "checkpoint respawn position must be above the failure boundary");
+    }
+    return { id, spawnPosition, failureBoundaryY, objects };
 }
 
 export async function loadLevel(
@@ -217,21 +225,26 @@ function errorMessage(error: unknown): string {
 }
 
 export function levelSurfaces(level: LevelDefinition): LevelSurface[] {
-    return level.objects.map((object) => {
-        const { position, rotation, scale } = object.transform;
-        const collisionDimensions = object.collision.dimensions;
-        return {
-            id: object.id,
-            role: object.role,
-            centerX: position[0],
-            centerZ: position[2],
-            rotationY: 2 * Math.atan2(rotation[1], rotation[3]),
-            width: scale[0] * collisionDimensions[0],
-            height: scale[1] * collisionDimensions[1],
-            depth: scale[2] * collisionDimensions[2],
-            topY: position[1] + (scale[1] * collisionDimensions[1]) / 2,
-        };
-    });
+    return level.objects
+        .filter(
+            (object): object is LevelSurfaceObjectDefinition =>
+                object.role === "ground" || object.role === "platform",
+        )
+        .map((object) => {
+            const { position, rotation, scale } = object.transform;
+            const collisionDimensions = object.collision.dimensions;
+            return {
+                id: object.id,
+                role: object.role,
+                centerX: position[0],
+                centerZ: position[2],
+                rotationY: 2 * Math.atan2(rotation[1], rotation[3]),
+                width: scale[0] * collisionDimensions[0],
+                height: scale[1] * collisionDimensions[1],
+                depth: scale[2] * collisionDimensions[2],
+                topY: position[1] + (scale[1] * collisionDimensions[1]) / 2,
+            };
+        });
 }
 
 export function levelSurfaceContains(

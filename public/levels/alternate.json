@@ -1,7 +1,7 @@
 {
-  "formatVersion": 1,
   "id": "alternate",
   "spawnPosition": [-5, 2, 4],
+  "failureBoundaryY": -10,
   "objects": [
     {
       "id": "ground",

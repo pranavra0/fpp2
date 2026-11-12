@@ -1,6 +1,6 @@
 import { type Resource } from "@dylanebert/shallot";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
-import type { LevelDefinition } from "../content/level";
+import type { LevelDefinition, LevelMaterial } from "../content/level";
 import type { Vec3 } from "../vec";
 
 export type EditorMode = "play" | "edit";
@@ -46,7 +46,8 @@ export type EditorState = {
     snap: number;
     dragging: EditorDrag | null;
     spawnMarker: number;
-    materials: Record<"ground" | "platform", MaterialHandle> | undefined;
+    failureMarker: number;
+    materials: Record<LevelMaterial, MaterialHandle> | undefined;
     outlineColor: number;
     undo: LevelDefinition[];
     redo: LevelDefinition[];
@@ -84,6 +85,7 @@ export const editorState: Resource<EditorState> = {
         snap: 0.5,
         dragging: null,
         spawnMarker: 0,
+        failureMarker: 0,
         materials: undefined,
         outlineColor: 0xffed7c,
         undo: [],

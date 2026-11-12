@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { createApp, Time, Transform } from "@dylanebert/shallot";
+import { Body, createApp, Shape, Time, Transform } from "@dylanebert/shallot";
 import { parseLevelDefinition } from "../src/content/level";
 import { DEFAULT_TUNING } from "../src/config/gameplay";
 import {
@@ -59,6 +59,48 @@ test("editing an authored platform updates its render transform and landing geom
         }
         expect(sim.pogo.state).toBe("Compression");
         expect(sim.pogo.contactTip.y).toBeCloseTo(2.67);
+    } finally {
+        app.dispose();
+    }
+});
+
+test("editing a trigger updates its visible volume without adding physical collision", async () => {
+    const raw = await readFile(new URL("../public/levels/first-level.json", import.meta.url), "utf8");
+    const level = parseLevelDefinition(JSON.parse(raw));
+    const checkpoint = level.objects.find((object) => object.role === "checkpoint");
+    if (!checkpoint) throw new Error("checkpoint is missing from first-level");
+    let entities: ReturnType<typeof addLevelPhysics> = [];
+    const app = await createApp({
+        defaults: false,
+        plugins: [PogoWorldCollisionPlugin],
+        setup(world) {
+            entities = addLevelPhysics(world, level);
+        },
+    });
+    try {
+        const { world } = app;
+        world.step(Time.FIXED_DT);
+        const entity = entities.find((candidate) => candidate.id === checkpoint.id);
+        if (!entity) throw new Error("checkpoint entity is missing");
+        const changed = {
+            ...checkpoint,
+            transform: {
+                ...checkpoint.transform,
+                position: [-1, 6, -9] as const,
+                scale: [2, 3, 4] as const,
+            },
+        };
+        updateLevelEntity(world, entity, changed);
+        world.step(Time.FIXED_DT);
+
+        expect(world.storage(Transform).translation.x.get(entity.eid)).toBe(-1);
+        expect(world.storage(Transform).translation.y.get(entity.eid)).toBe(6);
+        expect(world.storage(Transform).scale.x.get(entity.eid)).toBe(2);
+        expect(world.storage(Transform).scale.y.get(entity.eid)).toBe(3);
+        expect(world.storage(Transform).scale.z.get(entity.eid)).toBe(4);
+        expect(world.has(entity.eid, Body)).toBe(false);
+        expect(world.has(entity.eid, Shape)).toBe(false);
+        expect(parseLevelDefinition({ ...level, objects: level.objects.map((object) => object.id === checkpoint.id ? changed : object) }).objects.find((object) => object.id === checkpoint.id)?.collision.kind).toBe("trigger-box");
     } finally {
         app.dispose();
     }

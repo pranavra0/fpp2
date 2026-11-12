@@ -37,10 +37,12 @@ export const LandingSurface = component("LandingSurface", {
 export type LevelEntity = { id: string; eid: number; object: LevelObjectDefinition };
 
 function levelSurface(object: LevelObjectDefinition): LevelSurface {
+    if (object.collision.kind !== "box")
+        throw new Error(`Trigger object "${object.id}" has no landing surface`);
     const [surface] = levelSurfaces({
-        formatVersion: 1,
         id: "editor-object",
         spawnPosition: [0, 0, 0],
+        failureBoundaryY: -20,
         objects: [object],
     });
     if (!surface) throw new Error(`Level surface missing for object "${object.id}"`);
@@ -87,6 +89,19 @@ export function addLevelObjectPhysics(
     object: LevelObjectDefinition,
     tuning: Tuning = DEFAULT_TUNING,
 ): LevelEntity {
+    if (object.collision.kind === "trigger-box") {
+        const eid = world.create();
+        world.add(eid, Transform, {
+            translation: object.transform.position,
+            rotation: object.transform.rotation,
+            scale: [
+                object.transform.scale[0] * object.collision.dimensions[0],
+                object.transform.scale[1] * object.collision.dimensions[1],
+                object.transform.scale[2] * object.collision.dimensions[2],
+            ],
+        });
+        return { id: object.id, eid, object };
+    }
     const surface = levelSurface(object);
     const edgeTolerance = object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
     return {
@@ -109,6 +124,18 @@ export function updateLevelEntity(
 ): void {
     if (object.id !== entity.id)
         throw new Error(`Cannot change stable level object id "${entity.id}"`);
+    if (object.collision.kind === "trigger-box") {
+        world.storage(Transform).translation.set(entity.eid, ...object.transform.position);
+        world.storage(Transform).rotation.set(entity.eid, ...object.transform.rotation);
+        world.storage(Transform).scale.set(
+            entity.eid,
+            object.transform.scale[0] * object.collision.dimensions[0],
+            object.transform.scale[1] * object.collision.dimensions[1],
+            object.transform.scale[2] * object.collision.dimensions[2],
+        );
+        entity.object = object;
+        return;
+    }
     const surface = levelSurface(object);
     world.storage(Transform).translation.set(entity.eid, ...object.transform.position);
     world.storage(Transform).rotation.set(entity.eid, ...object.transform.rotation);

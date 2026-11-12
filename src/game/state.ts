@@ -1,6 +1,6 @@
 import { type Resource } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
-import type { LevelDefinition } from "../content/level";
+import type { LevelDefinition, LevelMaterial } from "../content/level";
 import { createSim, type Controls, type Sim } from "../sim";
 import { setVec3, type Vec3 } from "../vec";
 import type { LevelEntity } from "./physics";
@@ -30,6 +30,8 @@ export type GameRuntime = {
     launchFovPulse: number;
     lastContactId: number;
     lastLaunchId: number;
+    levelMaterials: Record<LevelMaterial, number>;
+    activeCheckpointMaterial: number;
 };
 
 export const runtime: Resource<GameRuntime> = {
@@ -67,6 +69,8 @@ export const runtime: Resource<GameRuntime> = {
             launchFovPulse: 0,
             lastContactId: sim.pogo.contactId,
             lastLaunchId: sim.pogo.lastLaunchedContactId,
+            levelMaterials: { ground: 0, platform: 0, goal: 0, checkpoint: 0 },
+            activeCheckpointMaterial: 0,
         };
     },
 };
@@ -77,7 +81,11 @@ export function activeLevel(state: GameRuntime): LevelDefinition {
 }
 
 export function resetPlayerToSpawn(state: GameRuntime): void {
-    const spawn = activeLevel(state).spawnPosition;
+    resetPlayerToPosition(state, activeLevel(state).spawnPosition);
+}
+
+export function resetPlayerToPosition(state: GameRuntime, position: readonly [number, number, number]): void {
+    const spawn = position;
     state.sim = createSim({ x: spawn[0], y: spawn[1], z: spawn[2] });
     Object.assign(state.controls, {
         leanX: 0,
