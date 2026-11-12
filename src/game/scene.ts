@@ -147,4 +147,12 @@ export async function initializeGame(world: World): Promise<void> {
         validLandingMarker,
         uncertainLandingMarker,
     });
+
+    if (import.meta.env?.DEV === true) {
+        const { initializeEditor } = await import("./editor");
+        initializeEditor(world, {
+            ground: groundMaterial,
+            platform: platformMaterial,
+        });
+    }
 }

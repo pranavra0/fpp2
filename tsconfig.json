@@ -1,4 +1,7 @@
 {
     "extends": "@dylanebert/shallot/tsconfig.json",
+    "compilerOptions": {
+        "allowImportingTsExtensions": true
+    },
     "include": ["vite.config.ts", "src/**/*.ts"]
 }

@@ -4,6 +4,7 @@ import { DEFAULT_TUNING } from "../config/gameplay";
 import { simulationSubstepCount, step } from "../sim";
 import { findLandingSurface } from "./physics";
 import { updateLandingMarker, updateVisualFeedback, writePose } from "./presentation";
+import { editorState, isEditing } from "./editor-state";
 import { runtime } from "./state";
 
 export const Simulate = {
@@ -11,6 +12,7 @@ export const Simulate = {
     group: "fixed" as const,
     after: [StepPhysicsSystem],
     update(world: World): void {
+        if (isEditing(world.resource(editorState))) return;
         const state = world.resource(runtime);
         state.previousCameraFocus.x = state.cameraFocus.x;
         state.previousCameraFocus.y = state.cameraFocus.y;

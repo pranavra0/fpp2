@@ -5,6 +5,7 @@ import {
     type Plugin,
     StandardRenderingPlugin,
 } from "@dylanebert/shallot";
+import { OutlinePlugin } from "@dylanebert/shallot/extras";
 import { FollowCamera, PresentCamera, PresentFollowCamera } from "./game/camera";
 import { ReadControls } from "./game/input";
 import { PogoWorldCollisionPlugin } from "./game/physics";
@@ -20,6 +21,7 @@ export const Game: Plugin = {
         MeshPlugin,
         StandardRenderingPlugin,
         PogoWorldCollisionPlugin,
+        ...(import.meta.env?.DEV === true ? [OutlinePlugin] : []),
     ],
     initialize: initializeGame,
     systems: [ReadControls, Simulate, FollowCamera, PresentFollowCamera, PresentCamera],

@@ -9,6 +9,7 @@ import { Simulate } from "./simulation";
 import { CAMERA_TUNING } from "../config/camera";
 import { runtime } from "./state";
 import { clamp01 } from "./math";
+import { editorState, isEditing } from "./editor-state";
 
 export function cameraPosition(
     focus: { x: number; y: number; z: number },
@@ -51,6 +52,7 @@ export const FollowCamera = {
     group: "fixed" as const,
     after: [Simulate],
     update(world: World): void {
+        if (isEditing(world.resource(editorState))) return;
         const state = world.resource(runtime);
         const dt = world.time.fixedDeltaTime;
         const { body } = state.sim;
@@ -96,6 +98,7 @@ export const PresentFollowCamera = {
     name: "PogoCameraPosePresentation",
     group: "simulation" as const,
     update(world: World): void {
+        if (isEditing(world.resource(editorState))) return;
         const state = world.resource(runtime);
         const alpha = world.time.fixedAlpha;
         const focus = {
@@ -142,6 +145,7 @@ export const PresentCamera = {
     // FOV must be updated before view preparation to affect the current frame.
     before: [PrepareViewsSystem],
     update(world: World): void {
+        if (isEditing(world.resource(editorState))) return;
         const state = world.resource(runtime);
         const body = state.sim.body;
         const horizontalSpeed = Math.hypot(body.vel.x, body.vel.z);

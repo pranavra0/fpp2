@@ -2,9 +2,9 @@ import {
     Body,
     component,
     f32,
-    Hulls,
     Shape,
     Transform,
+    UNIT_CUBE_ID,
     type Plugin,
     type World,
 } from "@dylanebert/shallot";
@@ -35,6 +35,17 @@ export const LandingSurface = component("LandingSurface", {
 });
 
 export type LevelEntity = { id: string; eid: number; object: LevelObjectDefinition };
+
+function levelSurface(object: LevelObjectDefinition): LevelSurface {
+    const [surface] = levelSurfaces({
+        formatVersion: 1,
+        id: "editor-object",
+        spawnPosition: [0, 0, 0],
+        objects: [object],
+    });
+    if (!surface) throw new Error(`Level surface missing for object "${object.id}"`);
+    return surface;
+}
 
 function addSurface(
     world: World,
@@ -68,24 +79,50 @@ export function addLevelPhysics(
     level: LevelDefinition,
     tuning: Tuning = DEFAULT_TUNING,
 ): LevelEntity[] {
-    const geometry = world.resource(Hulls).add({ name: "level-box", halfExtents: [0.5, 0.5, 0.5] });
-    const surfaces = new Map(levelSurfaces(level).map((surface) => [surface.id, surface]));
-    return level.objects.map((object) => {
-        const surface = surfaces.get(object.id);
-        if (!surface) throw new Error(`Level surface missing for object "${object.id}"`);
-        const edgeTolerance =
-            object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
-        return {
-            id: object.id,
-            eid: addSurface(world, geometry, object, surface, edgeTolerance),
-            object,
-        };
-    });
+    return level.objects.map((object) => addLevelObjectPhysics(world, object, tuning));
+}
+
+export function addLevelObjectPhysics(
+    world: World,
+    object: LevelObjectDefinition,
+    tuning: Tuning = DEFAULT_TUNING,
+): LevelEntity {
+    const surface = levelSurface(object);
+    const edgeTolerance = object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
+    return {
+        id: object.id,
+        eid: addSurface(world, UNIT_CUBE_ID, object, surface, edgeTolerance),
+        object,
+    };
 }
 
 export function destroyLevelEntities(world: World, entities: LevelEntity[]): void {
     for (const { eid } of entities) world.destroy(eid);
     entities.length = 0;
+}
+
+export function updateLevelEntity(
+    world: World,
+    entity: LevelEntity,
+    object: LevelObjectDefinition,
+    tuning: Tuning = DEFAULT_TUNING,
+): void {
+    if (object.id !== entity.id)
+        throw new Error(`Cannot change stable level object id "${entity.id}"`);
+    const surface = levelSurface(object);
+    world.storage(Transform).translation.set(entity.eid, ...object.transform.position);
+    world.storage(Transform).rotation.set(entity.eid, ...object.transform.rotation);
+    world.storage(Transform).scale.set(entity.eid, ...object.transform.scale);
+    world.storage(Shape).scale.set(entity.eid, ...object.collision.dimensions);
+    const edgeTolerance = object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
+    world.storage(LandingSurface).centerX.set(entity.eid, surface.centerX);
+    world.storage(LandingSurface).centerZ.set(entity.eid, surface.centerZ);
+    world.storage(LandingSurface).rotationY.set(entity.eid, surface.rotationY);
+    world.storage(LandingSurface).topY.set(entity.eid, surface.topY);
+    world.storage(LandingSurface).width.set(entity.eid, surface.width);
+    world.storage(LandingSurface).depth.set(entity.eid, surface.depth);
+    world.storage(LandingSurface).edgeTolerance.set(entity.eid, edgeTolerance);
+    entity.object = object;
 }
 
 function tipProxy(edgeTolerance: number, halfHeight: number): ShapeProxy {

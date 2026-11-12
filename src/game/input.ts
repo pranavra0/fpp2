@@ -1,5 +1,6 @@
 import { Devices, type World } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
+import { editorState, isEditing } from "./editor-state";
 import { resetPlayerToSpawn, runtime } from "./state";
 
 export const ReadControls = {
@@ -9,6 +10,19 @@ export const ReadControls = {
         const devices = world.resource(Devices);
         const state = world.resource(runtime);
         const held = devices.keys.held;
+        const editor = world.resource(editorState);
+        if (isEditing(editor)) {
+            Object.assign(state.controls, {
+                leanX: 0,
+                leanZ: 0,
+                compress: false,
+                jumpPressed: false,
+                extend: false,
+                retract: false,
+            });
+            state.pendingJumpPress = false;
+            return;
+        }
         const active = devices.enabled;
         if (active && devices.keys.pressed.has("KeyR")) resetPlayerToSpawn(state);
         const controls = state.controls;
