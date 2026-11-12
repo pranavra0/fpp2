@@ -1,5 +1,13 @@
 # Shallot project
 
+## Persistent task constraints
+
+- Use plain technical wording only. No flavor text, jokes, emojis, themed names, or marketing language in code, comments, logs, or replies.
+- Do exactly the requested task. Do not add unrelated features, files, abstractions, configs, READMEs, or docs.
+- For simulation code, use TypeScript, plain typed objects, and free functions. Do not use classes, inheritance, getters/setters, dependency injection, or event systems.
+- Simulation code must not add rendering, input, camera, UI, engine imports, or a world/collision interface. The floor is hardcoded at y = 0.
+- Comments explain why only. Do not add TODO comments. Use assertions for invariants; do not clamp invalid state to hide it.
+
 ## Shallot Specific notes
 
 Explore this project's entry, plugins and checks first; reuse its setup.
