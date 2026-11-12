@@ -1,28 +1,38 @@
-import { mountOverlay, requestPointerLock, type World } from "@dylanebert/shallot";
+import { Devices, mountOverlay, requestPointerLock, type World } from "@dylanebert/shallot";
 import { activeLevel, runtime } from "./state";
 import { gameplayProgress } from "./gameplay-state";
 import { editorState, isEditing } from "./editor-state";
 import { restartGameplay } from "./gameplay-system";
 
 const HUD_STYLE = `
-#fpp2-hud{position:absolute;inset:0;color:#f2f2f2;font:13px/1.45 system-ui,sans-serif;pointer-events:none}
-#fpp2-hud .hud-info{position:absolute;top:10px;right:10px;max-width:min(320px,calc(100vw - 20px));padding:8px 10px;background:#111c;border:1px solid #555}
-#fpp2-hud .hud-level{font-weight:600}#fpp2-hud .hud-controls{color:#ccc}
-#fpp2-hud .hud-event{position:absolute;top:18%;left:50%;transform:translateX(-50%);padding:7px 12px;background:#111d;border:1px solid #777;text-align:center}
-#fpp2-hud .hud-complete{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(320px,calc(100vw - 32px));padding:18px;background:#111e;border:1px solid #777;text-align:center;pointer-events:auto}
-#fpp2-hud .hud-complete h1{margin:0 0 12px;font-size:20px;font-weight:600}
-#fpp2-hud button{min-height:32px;padding:5px 12px;border:1px solid #777;background:#292929;color:#fff;font:inherit;cursor:pointer}
-#fpp2-hud button:hover{background:#383838}
-@media(max-width:600px){#fpp2-hud .hud-info{font-size:12px}#fpp2-hud .hud-event{top:22%}}
+#fpp2-hud{position:absolute;inset:0;color:#eee;font:13px/1.4 system-ui,sans-serif;pointer-events:none}
+#fpp2-hud [hidden]{display:none!important}
+#fpp2-hud .hud-level{position:absolute;top:10px;right:10px;padding:4px 8px;background:#111c}
+#fpp2-hud .hud-help{position:absolute;top:10px;left:10px;max-width:min(320px,calc(100vw - 20px));padding:8px;background:#111c}
+#fpp2-hud .hud-controls{display:grid;grid-template-columns:auto auto;column-gap:16px;row-gap:3px}
+#fpp2-hud .hud-event{position:absolute;bottom:10px;left:10px;padding:5px 8px;background:#111c}
+#fpp2-hud .hud-complete{position:absolute;bottom:10px;left:10px;display:flex;align-items:center;gap:12px;padding:5px 8px;background:#111c;pointer-events:auto}
+#fpp2-hud button{min-height:28px;padding:4px 8px;border:0;background:#333;color:#fff;font:inherit;cursor:pointer}
+#fpp2-hud button:hover{background:#444}
 `;
 
 export function initializeGameplayHud(world: World): void {
     const root = document.createElement("div");
     root.id = "fpp2-hud";
     root.innerHTML = `<style>${HUD_STYLE}</style>
-      <div class="hud-info"><div class="hud-level" data-hud-level></div><div class="hud-controls">WASD move · Space jump / charge · E/Q pole length<br>R restart at checkpoint/start · Shift+R restart level</div></div>
+      <div class="hud-level" data-hud-level></div>
+      <section class="hud-help" data-hud-help aria-label="Controls" hidden>
+        <div class="hud-controls">
+          <span>WASD</span><span>Move</span>
+          <span>Space</span><span>Jump / charge</span>
+          <span>E / Q</span><span>Extend / retract pole</span>
+          <span>R</span><span>Restart at checkpoint or start</span>
+          <span>Shift + R</span><span>Restart level</span>
+          <span>H</span><span>Toggle help</span>
+        </div>
+      </section>
       <div class="hud-event" data-hud-event hidden></div>
-      <section class="hud-complete" data-hud-complete hidden><h1>Level complete</h1><button type="button" data-hud-restart>Replay level</button></section>`;
+      <div class="hud-complete" data-hud-complete hidden><span>Level complete</span><button type="button" data-hud-restart>Replay level</button></div>`;
     root.querySelector<HTMLButtonElement>("[data-hud-restart]")!.addEventListener("click", () => {
         restartGameplay(world, true);
         requestPointerLock(world);
@@ -38,9 +48,15 @@ const GameplayHud = {
     update(world: World): void {
         const root = document.getElementById("fpp2-hud");
         if (!root) return;
-        const hidden = isEditing(world.resource(editorState));
-        root.hidden = hidden;
-        if (hidden) return;
+        const help = root.querySelector<HTMLElement>("[data-hud-help]")!;
+        if (isEditing(world.resource(editorState))) {
+            help.hidden = true;
+            root.hidden = true;
+            return;
+        }
+        root.hidden = false;
+        const devices = world.resource(Devices);
+        if (devices.enabled && devices.keys.pressed.has("KeyH")) help.hidden = !help.hidden;
         const progress = world.resource(gameplayProgress);
         root.querySelector<HTMLElement>("[data-hud-level]")!.textContent = activeLevel(world.resource(runtime)).id;
         const complete = progress.mode === "complete";

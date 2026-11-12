@@ -925,18 +925,17 @@ const EditorCameraPose = {
 };
 
 const EDITOR_STYLE = `
-#fpp2-editor{position:fixed;z-index:20;top:8px;left:8px;width:min(300px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;color:#ddd;background:#161616f2;border:1px solid #555;font:12px/1.35 system-ui,sans-serif;pointer-events:none}
+#fpp2-editor{position:fixed;z-index:20;top:8px;left:8px;width:min(300px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;color:#ddd;background:#161616f2;font:12px/1.35 system-ui,sans-serif;pointer-events:none}
 #fpp2-editor *{box-sizing:border-box}#fpp2-editor .editor-header,#fpp2-editor .editor-content{padding:8px;pointer-events:auto}
-#fpp2-editor .editor-header{display:flex;align-items:center;gap:8px;border-bottom:1px solid #444}
+#fpp2-editor .editor-header{display:flex;align-items:center;gap:8px}
 #fpp2-editor .editor-level{color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 #fpp2-editor .editor-content{display:grid;gap:8px}#fpp2-editor[data-mode=play] .editor-content{display:none}
-#fpp2-editor .editor-section{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;padding-top:7px;border-top:1px solid #444}
-#fpp2-editor .editor-section:first-child{padding-top:0;border-top:0}
+#fpp2-editor .editor-section{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}
 #fpp2-editor .editor-title{grid-column:1/-1;color:#aaa}
 #fpp2-editor .editor-row{display:flex;gap:5px;align-items:center}#fpp2-editor .editor-row>label{flex:1;min-width:0}
 #fpp2-editor label{display:grid;gap:2px;color:#bbb}#fpp2-editor .editor-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
-#fpp2-editor input,#fpp2-editor select{width:100%;min-width:0;height:27px;border:1px solid #555;background:#202020;color:#eee;padding:3px 5px;font:inherit}
-#fpp2-editor button{min-height:27px;border:1px solid #666;background:#292929;color:#eee;padding:3px 7px;font:inherit;cursor:pointer}
+#fpp2-editor input,#fpp2-editor select{width:100%;min-width:0;height:27px;border:0;background:#202020;color:#eee;padding:3px 5px;font:inherit}
+#fpp2-editor button{min-height:27px;border:0;background:#292929;color:#eee;padding:3px 7px;font:inherit;cursor:pointer}
 #fpp2-editor button:hover:not(:disabled){background:#383838}#fpp2-editor button:disabled{opacity:.45;cursor:default}
 #fpp2-editor .editor-actions{display:flex;gap:5px;flex-wrap:wrap}
 #fpp2-editor .editor-status{grid-column:1/-1;color:#aaa;overflow-wrap:anywhere}
