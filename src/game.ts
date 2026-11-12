@@ -1,6 +1,7 @@
 import {
     BrowserInputPlugin,
     Camera,
+    CameraBackground,
     Devices,
     DirectionalLight,
     GlobalAmbientLight,
@@ -19,6 +20,7 @@ import {
     Transform,
     type World,
 } from "@dylanebert/shallot";
+import { Sky, SkyPlugin, skyBackgroundHandle } from "@dylanebert/shallot/extras";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import { PrepareViewsSystem } from "@dylanebert/shallot/rendering";
 import { createSim, DEFAULT_TUNING, step, type Controls, type Platform, type Sim } from "./sim";
@@ -47,7 +49,7 @@ export const CAMERA_TUNING = {
     LOOKAHEAD_RESPONSE: 10,
     DISTANCE_M: Math.hypot(9, 9, 20),
     YAW_RAD: Math.atan2(9, 20),
-    PITCH_RAD: (33 * Math.PI) / 180,
+    PITCH_RAD: (20 * Math.PI) / 180,
     MIN_DISTANCE_M: 6,
     MAX_DISTANCE_M: 36,
     MIN_PITCH_RAD: (8 * Math.PI) / 180,
@@ -166,6 +168,19 @@ function initialize(world: World): void {
     world.add(sun, Transform, { rotation: lookAtRotation(-8, 12, 10, 0, 2, 0) });
     world.add(sun, DirectionalLight, { color: 0xfff0dc, illuminance: 5000 });
 
+    const sky = world.create();
+    world.add(sky, Sky, {
+        zenith: 0x5974d8,
+        horizon: 0xeaa4c9,
+        band: 0.12,
+        cloudColor: 0xfff4ec,
+        cloudCoverage: 0.78,
+        cloudDensity: 0.92,
+        cloudHeight: 2,
+        hazeColor: 0xeaa4c9,
+        hazeDensity: 0.018,
+    });
+
     const state = world.resource(runtime);
     const camera = world.create();
     const initialCameraPosition = cameraPosition(
@@ -180,6 +195,7 @@ function initialize(world: World): void {
         clearColor: 0x101827,
     });
     world.add(camera, StandardRenderer);
+    world.add(camera, CameraBackground, { background: skyBackgroundHandle(world) });
     world.add(camera, Transform, {
         translation: [initialCameraPosition.x, initialCameraPosition.y, initialCameraPosition.z],
         rotation: lookAtRotation(
@@ -677,7 +693,7 @@ const PresentCamera = {
 
 export const Game: Plugin = {
     name: "Game",
-    dependencies: [BrowserInputPlugin, MeshPlugin, StandardRenderingPlugin],
+    dependencies: [BrowserInputPlugin, MeshPlugin, StandardRenderingPlugin, SkyPlugin],
     initialize,
     systems: [ReadControls, Simulate, FollowCamera, PresentFollowCamera, PresentCamera],
 };
