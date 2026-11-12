@@ -10,6 +10,7 @@ import { CAMERA_TUNING } from "../config/camera";
 import { runtime } from "./state";
 import { clamp01 } from "./math";
 import { editorState, isEditing } from "./editor-state";
+import { gameplayProgress } from "./gameplay-state";
 
 export function cameraPosition(
     focus: { x: number; y: number; z: number },
@@ -53,6 +54,7 @@ export const FollowCamera = {
     after: [Simulate],
     update(world: World): void {
         if (isEditing(world.resource(editorState))) return;
+        if (world.resource(gameplayProgress).mode !== "active") return;
         const state = world.resource(runtime);
         const dt = world.time.fixedDeltaTime;
         const { body } = state.sim;
@@ -100,7 +102,10 @@ export const PresentFollowCamera = {
     update(world: World): void {
         if (isEditing(world.resource(editorState))) return;
         const state = world.resource(runtime);
-        const alpha = world.time.fixedAlpha;
+        const alpha =
+            world.resource(gameplayProgress).mode === "complete"
+                ? 1
+                : world.time.fixedAlpha;
         const focus = {
             x:
                 state.previousCameraFocus.x +
