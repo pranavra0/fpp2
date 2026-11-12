@@ -26,4 +26,7 @@ export const DEFAULT_TUNING = {
     LANDING_EDGE_TOLERANCE_M: 0.12,
 };
 
+export const PLAYER_TRIGGER_CAPSULE_DIAMETER_M = 0.65;
+export const PLAYER_TRIGGER_CAPSULE_HEIGHT_M = 0.82;
+
 export type Tuning = typeof DEFAULT_TUNING;

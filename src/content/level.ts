@@ -2,6 +2,7 @@ export type Vec3Tuple = readonly [number, number, number];
 export type QuaternionTuple = readonly [number, number, number, number];
 export type LevelObjectRole = "ground" | "platform" | "goal" | "checkpoint";
 export type LevelMaterial = LevelObjectRole;
+export type LevelAssetId = "sample-platform";
 
 type LevelObjectBase = {
     id: string;
@@ -12,11 +13,28 @@ type LevelObjectBase = {
     };
 };
 
-export type LevelSurfaceObjectDefinition = LevelObjectBase & {
-    role: "ground" | "platform";
-    visual: { kind: "box"; material: "ground" | "platform" };
+export type LevelGroundObjectDefinition = LevelObjectBase & {
+    role: "ground";
+    visual: { kind: "box"; material: "ground" };
     collision: { kind: "box"; dimensions: Vec3Tuple };
 };
+
+export type LevelBoxPlatformObjectDefinition = LevelObjectBase & {
+    role: "platform";
+    visual: { kind: "box"; material: "platform" };
+    collision: { kind: "box"; dimensions: Vec3Tuple };
+};
+
+export type LevelModelPlatformObjectDefinition = LevelObjectBase & {
+    role: "platform";
+    visual: { kind: "gltf"; asset: LevelAssetId };
+    collision: { kind: "box"; dimensions: Vec3Tuple };
+};
+
+export type LevelSurfaceObjectDefinition =
+    | LevelGroundObjectDefinition
+    | LevelBoxPlatformObjectDefinition
+    | LevelModelPlatformObjectDefinition;
 
 export type LevelTriggerObjectDefinition = LevelObjectBase & {
     role: "goal" | "checkpoint";
@@ -114,10 +132,23 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         invalid(`${path}.role`, 'expected "ground", "platform", "goal", or "checkpoint"');
     const transform = parseTransform(input.transform, `${path}.transform`);
     const visualInput = record(input.visual, `${path}.visual`);
-    exactKeys(visualInput, `${path}.visual`, ["kind", "material"]);
-    if (visualInput.kind !== "box") invalid(`${path}.visual.kind`, 'expected "box"');
-    if (visualInput.material !== role)
-        invalid(`${path}.visual.material`, `must match role "${role}"`);
+    let visual: { kind: "box"; material: LevelMaterial } | { kind: "gltf"; asset: LevelAssetId };
+    if (visualInput.kind === "box") {
+        exactKeys(visualInput, `${path}.visual`, ["kind", "material"]);
+        if (visualInput.material !== role)
+            invalid(`${path}.visual.material`, `must match role "${role}"`);
+        visual = { kind: "box", material: role };
+    } else if (visualInput.kind === "gltf") {
+        exactKeys(visualInput, `${path}.visual`, ["kind", "asset"]);
+        if (role !== "platform")
+            invalid(`${path}.visual.kind`, 'glTF visuals are supported only for "platform" objects');
+        const asset = string(visualInput.asset, `${path}.visual.asset`);
+        if (asset !== "sample-platform")
+            invalid(`${path}.visual.asset`, 'expected the known asset ID "sample-platform"');
+        visual = { kind: "gltf", asset };
+    } else {
+        invalid(`${path}.visual.kind`, 'expected "box" or "gltf"');
+    }
     const collisionInput = record(input.collision, `${path}.collision`);
     exactKeys(collisionInput, `${path}.collision`, ["kind", "dimensions"]);
     const trigger = role === "goal" || role === "checkpoint";
@@ -127,7 +158,9 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             trigger ? 'expected "trigger-box" for non-solid gameplay objects' : 'expected "box" for solid surfaces',
         );
     const dimensions = positiveTuple(collisionInput.dimensions, `${path}.collision.dimensions`);
-    if (trigger) {
+    if (role === "goal" || role === "checkpoint") {
+        if (visual.kind !== "box")
+            invalid(`${path}.visual.kind`, 'trigger objects require a "box" visual');
         return {
             id,
             role,
@@ -136,11 +169,30 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             collision: { kind: "trigger-box", dimensions },
         };
     }
+    if (role === "ground") {
+        if (visual.kind !== "box")
+            invalid(`${path}.visual.kind`, 'ground objects require a "box" visual');
+        return {
+            id,
+            role,
+            transform,
+            visual: { kind: "box", material: "ground" },
+            collision: { kind: "box", dimensions },
+        };
+    }
+    if (visual.kind === "gltf")
+        return {
+            id,
+            role,
+            transform,
+            visual,
+            collision: { kind: "box", dimensions },
+        };
     return {
         id,
         role,
         transform,
-        visual: { kind: "box", material: role },
+        visual: { kind: "box", material: "platform" },
         collision: { kind: "box", dimensions },
     };
 }

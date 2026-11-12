@@ -1,6 +1,6 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { Body, Shape, Time, createApp } from "@dylanebert/shallot";
+import { Time, createApp } from "@dylanebert/shallot";
 import { TIMEOUT } from "@dylanebert/shallot/testing";
 import { DEFAULT_TUNING } from "../src/config/gameplay";
 import { parseLevelDefinition, type Vec3Tuple } from "../src/content/level";
@@ -9,6 +9,7 @@ import { resetGameplayProgress } from "../src/game/gameplay-state";
 import { addLevelPhysics, findLandingSurface, PogoWorldCollisionPlugin } from "../src/game/physics";
 import { resetPlayerToPosition, runtime } from "../src/game/state";
 import { createSim, NEUTRAL_CONTROLS, step } from "../src/sim";
+import { overlappingCapsuleTriggers, PLAYER_TRIGGER_CAPSULE, sweepCapsuleTriggers } from "../src/game/trigger-contact";
 
 setDefaultTimeout(TIMEOUT.node);
 
@@ -43,8 +44,7 @@ test("first level supports checkpoint, failure respawn, goal, and restart transi
         world.step(Time.FIXED_DT);
         const checkpointEntity = levelEntities.find((entity) => entity.id === checkpoint.id);
         if (!checkpointEntity) throw new Error("checkpoint entity is missing");
-        expect(world.has(checkpointEntity.eid, Body)).toBe(false);
-        expect(world.has(checkpointEntity.eid, Shape)).toBe(false);
+        expect(checkpointEntity.collisionEid).toBeUndefined();
 
         const sim = createSim({
             x: checkpoint.transform.position[0],
@@ -53,13 +53,22 @@ test("first level supports checkpoint, failure respawn, goal, and restart transi
         });
         sim.body.vel.y = -1;
         const progress = createGameplayProgress(level);
+        progress.insideTriggerIds = new Set(
+            overlappingCapsuleTriggers(level, position(sim.body.pos), PLAYER_TRIGGER_CAPSULE),
+        );
         let checkpointEvent: string | null = null;
         for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ * 3 && !checkpointEvent; tick++) {
             const previous = position(sim.body.pos);
             step(sim, DEFAULT_TUNING, NEUTRAL_CONTROLS, (sweep) =>
                 findLandingSurface(world, sweep),
             );
-            checkpointEvent = advanceGameplay(level, progress, previous, position(sim.body.pos));
+            const current = position(sim.body.pos);
+            checkpointEvent = advanceGameplay(
+                level,
+                progress,
+                current,
+                [sweepCapsuleTriggers(level, previous, current, PLAYER_TRIGGER_CAPSULE)],
+            );
         }
         expect(checkpointEvent).toBe("checkpoint");
         expect(progress.checkpointId).toBe(checkpoint.id);
@@ -69,7 +78,7 @@ test("first level supports checkpoint, failure respawn, goal, and restart transi
             level,
             progress,
             position(sim.body.pos),
-            position(sim.body.pos),
+            [sweepCapsuleTriggers(level, position(sim.body.pos), position(sim.body.pos), PLAYER_TRIGGER_CAPSULE)],
         );
         expect(progressWhileInside).toBeNull();
 
@@ -79,7 +88,9 @@ test("first level supports checkpoint, failure respawn, goal, and restart transi
         for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ && !failureEvent; tick++) {
             const previous = position(falling.body.pos);
             step(falling, DEFAULT_TUNING, NEUTRAL_CONTROLS, () => undefined);
-            failureEvent = advanceGameplay(level, progress, previous, position(falling.body.pos));
+            failureEvent = advanceGameplay(level, progress, position(falling.body.pos), [
+                sweepCapsuleTriggers(level, previous, position(falling.body.pos), PLAYER_TRIGGER_CAPSULE),
+            ]);
         }
         expect(failureEvent).toBe("failure");
         expect(progress.checkpointId).toBe(checkpoint.id);
@@ -96,16 +107,15 @@ test("first level supports checkpoint, failure respawn, goal, and restart transi
         expect(player.sim.pogo.state).toBe("Airborne");
 
         const goalPosition = goal.transform.position;
-        const goalEvent = advanceGameplay(
-            level,
-            progress,
-            [goalPosition[0] - 4, goalPosition[1], goalPosition[2]],
-            [goalPosition[0] + 4, goalPosition[1], goalPosition[2]],
-        );
+        const goalStart: Vec3Tuple = [goalPosition[0] - 4, goalPosition[1], goalPosition[2]];
+        const goalEnd: Vec3Tuple = [goalPosition[0] + 4, goalPosition[1], goalPosition[2]];
+        const goalEvent = advanceGameplay(level, progress, goalEnd, [
+            sweepCapsuleTriggers(level, goalStart, goalEnd, PLAYER_TRIGGER_CAPSULE),
+        ]);
         expect(goalEvent).toBe("complete");
         expect(progress.mode).toBe("complete");
         expect(
-            advanceGameplay(level, progress, [0, 0, 0], [0, 0, 0]),
+            advanceGameplay(level, progress, [0, 0, 0], []),
         ).toBeNull();
 
         resetGameplayProgress(progress, level);

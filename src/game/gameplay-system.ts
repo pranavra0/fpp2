@@ -6,11 +6,12 @@ import {
 } from "@dylanebert/shallot";
 import { activeLevel, resetPlayerToPosition, resetPlayerToSpawn, runtime } from "./state";
 import { gameplayProgress, resetGameplayProgress } from "./gameplay-state";
-import { advanceGameplay, pointInsideTrigger, triggerObjects, type GameplayEvent } from "./gameplay";
+import { advanceGameplay, type GameplayEvent } from "./gameplay";
 import { playGameAudio } from "./audio";
 import { editorState, isEditing } from "./editor-state";
 import { updateLandingMarker, writePose } from "./presentation";
 import { Simulate } from "./simulation";
+import { overlappingCapsuleTriggers, PLAYER_TRIGGER_CAPSULE } from "./trigger-contact";
 
 function playerPosition(world: World): readonly [number, number, number] {
     const position = world.resource(runtime).sim.body.pos;
@@ -23,8 +24,10 @@ function setCheckpointMaterials(world: World): void {
     const meshMaterials = world.storage(MeshMaterial).material;
     for (const entity of state.levelEntities) {
         if (entity.object.role !== "checkpoint") continue;
+        if (entity.visualEid === undefined)
+            throw new Error(`Checkpoint visual missing for level object "${entity.id}"`);
         meshMaterials.set(
-            entity.eid,
+            entity.visualEid,
             entity.id === progress.checkpointId
                 ? state.activeCheckpointMaterial
                 : state.levelMaterials.checkpoint,
@@ -48,9 +51,9 @@ function syncTriggerOverlaps(world: World): void {
     const progress = world.resource(gameplayProgress);
     progress.insideTriggerIds.clear();
     const position = playerPosition(world);
-    for (const trigger of triggerObjects(activeLevel(world.resource(runtime)))) {
-        if (pointInsideTrigger(trigger, position)) progress.insideTriggerIds.add(trigger.id);
-    }
+    for (const id of overlappingCapsuleTriggers(activeLevel(world.resource(runtime)), position, PLAYER_TRIGGER_CAPSULE))
+        progress.insideTriggerIds.add(id);
+    progress.pendingContactSteps.length = 0;
 }
 
 export function restartGameplay(world: World, fromStart: boolean): void {
@@ -67,10 +70,10 @@ export function restartGameplay(world: World, fromStart: boolean): void {
         progress.insideTriggerIds.clear();
         progress.event = null;
         progress.eventRemaining = 0;
+        progress.pendingContactSteps.length = 0;
     }
     clearMovement(state);
     resetPlayerToPosition(state, respawnPosition);
-    progress.previousPosition = playerPosition(world);
     syncTriggerOverlaps(world);
     setCheckpointMaterials(world);
     writePose(world, state);
@@ -90,12 +93,13 @@ export const GameplayProgression = {
         const current = playerPosition(world);
 
         if (progress.mode === "active") {
-            const previous = progress.previousPosition;
-            const event = advanceGameplay(level, progress, previous, current);
+            const contactSteps = progress.pendingContactSteps.splice(0);
+            const event = advanceGameplay(level, progress, current, contactSteps);
             if (event) handleGameplayEvent(world, event);
+        } else {
+            progress.pendingContactSteps.length = 0;
         }
 
-        progress.previousPosition = playerPosition(world);
         if (progress.eventRemaining > 0 && progress.event !== "complete") {
             progress.eventRemaining = Math.max(0, progress.eventRemaining - world.time.fixedDeltaTime);
             if (progress.eventRemaining === 0) progress.event = null;
@@ -112,9 +116,9 @@ function handleGameplayEvent(world: World, event: GameplayEvent): void {
     } else if (event === "failure") {
         playGameAudio(world, "failure", 0.8);
         progress.insideTriggerIds.clear();
+        progress.pendingContactSteps.length = 0;
         clearMovement(state);
         resetPlayerToPosition(state, progress.respawnPosition);
-        progress.previousPosition = playerPosition(world);
         syncTriggerOverlaps(world);
         writePose(world, state);
         updateLandingMarker(world, state);
@@ -131,7 +135,6 @@ export function initializeGameplay(world: World): void {
     const state = world.resource(runtime);
     const progress = world.resource(gameplayProgress);
     resetGameplayProgress(progress, activeLevel(state));
-    progress.previousPosition = playerPosition(world);
     syncTriggerOverlaps(world);
     setCheckpointMaterials(world);
 }

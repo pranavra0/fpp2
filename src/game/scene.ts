@@ -19,7 +19,7 @@ import { initializeGameAudio } from "./audio";
 import { CAMERA_TUNING } from "../config/camera";
 import { loadLevel } from "../content/level";
 import { addLevelPhysics } from "./physics";
-import { addLevelRendering } from "./level-rendering";
+import { addLevelRendering, loadLevelAsset, loadLevelAssets } from "./level-rendering";
 import { predictLanding } from "./presentation";
 import { cameraPosition } from "./camera";
 import { activeLevel, resetPlayerToSpawn, runtime } from "./state";
@@ -48,6 +48,8 @@ export async function initializeGame(world: World): Promise<void> {
     state.level = await loadLevel(selectedLevel);
     resetPlayerToSpawn(state);
     const levelDefinition = activeLevel(state);
+    await loadLevelAssets(world, levelDefinition);
+    if (import.meta.env?.DEV === true) await loadLevelAsset(world, "sample-platform");
 
     const ambient = world.resource(GlobalAmbientLight);
     ambient.color = 0xc9d8ee;

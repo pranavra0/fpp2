@@ -27,6 +27,13 @@ test("editing an authored platform updates its render transform and landing geom
         world.step(Time.FIXED_DT);
         const platform = entities.find((entity) => entity.id === "platform-1");
         if (!platform) throw new Error("platform-1 is missing from the test level");
+        const platformVisualEid = world.create();
+        platform.visualEid = platformVisualEid;
+        world.add(platformVisualEid, Transform, {
+            translation: platform.object.transform.position,
+            rotation: platform.object.transform.rotation,
+            scale: platform.object.transform.scale,
+        });
         const changed = {
             ...platform.object,
             transform: {
@@ -38,7 +45,9 @@ test("editing an authored platform updates its render transform and landing geom
         updateLevelEntity(world, platform, changed);
         world.step(Time.FIXED_DT);
 
-        expect(world.storage(Transform).translation.x.get(platform.eid)).toBe(8);
+        expect(platform.collisionEid).toBeDefined();
+        expect(world.storage(Transform).translation.x.get(platform.collisionEid!)).toBe(8);
+        expect(world.storage(Transform).translation.x.get(platformVisualEid)).toBe(8);
         expect(
             findLandingSurface(world, {
                 previousTip: { x: 8, y: 2.7, z: -2 },
@@ -68,7 +77,8 @@ test("editing a trigger updates its visible volume without adding physical colli
     const raw = await readFile(new URL("../public/levels/first-level.json", import.meta.url), "utf8");
     const level = parseLevelDefinition(JSON.parse(raw));
     const checkpoint = level.objects.find((object) => object.role === "checkpoint");
-    if (!checkpoint) throw new Error("checkpoint is missing from first-level");
+    if (!checkpoint || checkpoint.collision.kind !== "trigger-box")
+        throw new Error("checkpoint is missing from first-level");
     let entities: ReturnType<typeof addLevelPhysics> = [];
     const app = await createApp({
         defaults: false,
@@ -82,6 +92,17 @@ test("editing a trigger updates its visible volume without adding physical colli
         world.step(Time.FIXED_DT);
         const entity = entities.find((candidate) => candidate.id === checkpoint.id);
         if (!entity) throw new Error("checkpoint entity is missing");
+        const triggerVisualEid = world.create();
+        entity.visualEid = triggerVisualEid;
+        world.add(triggerVisualEid, Transform, {
+            translation: checkpoint.transform.position,
+            rotation: checkpoint.transform.rotation,
+            scale: [
+                checkpoint.transform.scale[0] * checkpoint.collision.dimensions[0],
+                checkpoint.transform.scale[1] * checkpoint.collision.dimensions[1],
+                checkpoint.transform.scale[2] * checkpoint.collision.dimensions[2],
+            ],
+        });
         const changed = {
             ...checkpoint,
             transform: {
@@ -93,13 +114,15 @@ test("editing a trigger updates its visible volume without adding physical colli
         updateLevelEntity(world, entity, changed);
         world.step(Time.FIXED_DT);
 
-        expect(world.storage(Transform).translation.x.get(entity.eid)).toBe(-1);
-        expect(world.storage(Transform).translation.y.get(entity.eid)).toBe(6);
-        expect(world.storage(Transform).scale.x.get(entity.eid)).toBe(2);
-        expect(world.storage(Transform).scale.y.get(entity.eid)).toBe(3);
-        expect(world.storage(Transform).scale.z.get(entity.eid)).toBe(4);
-        expect(world.has(entity.eid, Body)).toBe(false);
-        expect(world.has(entity.eid, Shape)).toBe(false);
+        expect(entity.collisionEid).toBeUndefined();
+        expect(world.storage(Transform).translation.x.get(triggerVisualEid)).toBe(-1);
+        expect(world.storage(Transform).translation.y.get(triggerVisualEid)).toBe(6);
+        expect(world.storage(Transform).scale.x.get(triggerVisualEid)).toBe(2);
+        expect(world.storage(Transform).scale.y.get(triggerVisualEid)).toBe(3);
+        expect(world.storage(Transform).scale.z.get(triggerVisualEid)).toBe(4);
+        expect(world.has(triggerVisualEid, Body)).toBe(false);
+        expect(world.has(triggerVisualEid, Shape)).toBe(false);
+        expect(entity.object.transform.position).toEqual([-1, 6, -9]);
         expect(parseLevelDefinition({ ...level, objects: level.objects.map((object) => object.id === checkpoint.id ? changed : object) }).objects.find((object) => object.id === checkpoint.id)?.collision.kind).toBe("trigger-box");
     } finally {
         app.dispose();

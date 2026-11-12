@@ -34,7 +34,12 @@ export const LandingSurface = component("LandingSurface", {
     edgeTolerance: f32,
 });
 
-export type LevelEntity = { id: string; eid: number; object: LevelObjectDefinition };
+export type LevelEntity = {
+    id: string;
+    collisionEid?: number;
+    visualEid?: number;
+    object: LevelObjectDefinition;
+};
 
 function levelSurface(object: LevelObjectDefinition): LevelSurface {
     if (object.collision.kind !== "box")
@@ -89,30 +94,21 @@ export function addLevelObjectPhysics(
     object: LevelObjectDefinition,
     tuning: Tuning = DEFAULT_TUNING,
 ): LevelEntity {
-    if (object.collision.kind === "trigger-box") {
-        const eid = world.create();
-        world.add(eid, Transform, {
-            translation: object.transform.position,
-            rotation: object.transform.rotation,
-            scale: [
-                object.transform.scale[0] * object.collision.dimensions[0],
-                object.transform.scale[1] * object.collision.dimensions[1],
-                object.transform.scale[2] * object.collision.dimensions[2],
-            ],
-        });
-        return { id: object.id, eid, object };
-    }
+    if (object.collision.kind === "trigger-box") return { id: object.id, object };
     const surface = levelSurface(object);
     const edgeTolerance = object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
     return {
         id: object.id,
-        eid: addSurface(world, UNIT_CUBE_ID, object, surface, edgeTolerance),
+        collisionEid: addSurface(world, UNIT_CUBE_ID, object, surface, edgeTolerance),
         object,
     };
 }
 
 export function destroyLevelEntities(world: World, entities: LevelEntity[]): void {
-    for (const { eid } of entities) world.destroy(eid);
+    for (const entity of entities) {
+        if (entity.visualEid !== undefined) world.destroy(entity.visualEid);
+        if (entity.collisionEid !== undefined) world.destroy(entity.collisionEid);
+    }
     entities.length = 0;
 }
 
@@ -124,31 +120,45 @@ export function updateLevelEntity(
 ): void {
     if (object.id !== entity.id)
         throw new Error(`Cannot change stable level object id "${entity.id}"`);
-    if (object.collision.kind === "trigger-box") {
-        world.storage(Transform).translation.set(entity.eid, ...object.transform.position);
-        world.storage(Transform).rotation.set(entity.eid, ...object.transform.rotation);
-        world.storage(Transform).scale.set(
-            entity.eid,
-            object.transform.scale[0] * object.collision.dimensions[0],
-            object.transform.scale[1] * object.collision.dimensions[1],
-            object.transform.scale[2] * object.collision.dimensions[2],
-        );
-        entity.object = object;
-        return;
+    if (
+        entity.object.visual.kind !== object.visual.kind ||
+        (entity.object.visual.kind === "gltf" &&
+            object.visual.kind === "gltf" &&
+            entity.object.visual.asset !== object.visual.asset)
+    )
+        throw new Error(`Cannot replace the visual for level object "${entity.id}" in place`);
+    if (object.collision.kind === "box") {
+        if (entity.collisionEid === undefined)
+            throw new Error(`Collision entity missing for surface "${entity.id}"`);
+        const surface = levelSurface(object);
+        const collisionEid = entity.collisionEid;
+        world.storage(Transform).translation.set(collisionEid, ...object.transform.position);
+        world.storage(Transform).rotation.set(collisionEid, ...object.transform.rotation);
+        world.storage(Transform).scale.set(collisionEid, ...object.transform.scale);
+        world.storage(Shape).scale.set(collisionEid, ...object.collision.dimensions);
+        const edgeTolerance = object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
+        world.storage(LandingSurface).centerX.set(collisionEid, surface.centerX);
+        world.storage(LandingSurface).centerZ.set(collisionEid, surface.centerZ);
+        world.storage(LandingSurface).rotationY.set(collisionEid, surface.rotationY);
+        world.storage(LandingSurface).topY.set(collisionEid, surface.topY);
+        world.storage(LandingSurface).width.set(collisionEid, surface.width);
+        world.storage(LandingSurface).depth.set(collisionEid, surface.depth);
+        world.storage(LandingSurface).edgeTolerance.set(collisionEid, edgeTolerance);
+    } else if (entity.collisionEid !== undefined) {
+        throw new Error(`Trigger object "${entity.id}" cannot have a collision entity`);
     }
-    const surface = levelSurface(object);
-    world.storage(Transform).translation.set(entity.eid, ...object.transform.position);
-    world.storage(Transform).rotation.set(entity.eid, ...object.transform.rotation);
-    world.storage(Transform).scale.set(entity.eid, ...object.transform.scale);
-    world.storage(Shape).scale.set(entity.eid, ...object.collision.dimensions);
-    const edgeTolerance = object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
-    world.storage(LandingSurface).centerX.set(entity.eid, surface.centerX);
-    world.storage(LandingSurface).centerZ.set(entity.eid, surface.centerZ);
-    world.storage(LandingSurface).rotationY.set(entity.eid, surface.rotationY);
-    world.storage(LandingSurface).topY.set(entity.eid, surface.topY);
-    world.storage(LandingSurface).width.set(entity.eid, surface.width);
-    world.storage(LandingSurface).depth.set(entity.eid, surface.depth);
-    world.storage(LandingSurface).edgeTolerance.set(entity.eid, edgeTolerance);
+    if (entity.visualEid !== undefined) {
+        const visualScale = object.collision.kind === "trigger-box"
+            ? [
+                  object.transform.scale[0] * object.collision.dimensions[0],
+                  object.transform.scale[1] * object.collision.dimensions[1],
+                  object.transform.scale[2] * object.collision.dimensions[2],
+              ] as const
+            : object.transform.scale;
+        world.storage(Transform).translation.set(entity.visualEid, ...object.transform.position);
+        world.storage(Transform).rotation.set(entity.visualEid, ...object.transform.rotation);
+        world.storage(Transform).scale.set(entity.visualEid, ...visualScale);
+    }
     entity.object = object;
 }
 

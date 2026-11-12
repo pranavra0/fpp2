@@ -73,6 +73,36 @@ test("level validation rejects duplicate identifiers and invalid dimensions", as
     );
 });
 
+test("level validation accepts the static platform asset ID and rejects unsupported visuals", async () => {
+    const prototype = await readLevelFile("prototype");
+    const platformIndex = prototype.objects.findIndex((object) => object.role === "platform");
+    const modelLevel = structuredClone(prototype);
+    modelLevel.objects[platformIndex] = {
+        ...modelLevel.objects[platformIndex]!,
+        visual: { kind: "gltf", asset: "sample-platform" },
+    } as (typeof modelLevel.objects)[number];
+    expect(parseLevelDefinition(modelLevel).objects[platformIndex]?.visual).toEqual({
+        kind: "gltf",
+        asset: "sample-platform",
+    });
+
+    const unknownAsset = structuredClone(modelLevel);
+    (unknownAsset.objects[platformIndex] as { visual: { kind: string; asset: string } }).visual.asset = "unknown";
+    expect(() => parseLevelDefinition(unknownAsset)).toThrow(
+        'level.objects[1].visual.asset: expected the known asset ID "sample-platform"',
+    );
+
+    const modelGround = structuredClone(modelLevel);
+    const groundIndex = modelGround.objects.findIndex((object) => object.role === "ground");
+    (modelGround.objects[groundIndex] as { visual: { kind: string; asset: string } }).visual = {
+        kind: "gltf",
+        asset: "sample-platform",
+    };
+    expect(() => parseLevelDefinition(modelGround)).toThrow(
+        'level.objects[0].visual.kind: glTF visuals are supported only for "platform" objects',
+    );
+});
+
 test("landing prediction uses finite ground and active level collision surfaces", async () => {
     const level = await readLevelFile("prototype");
     const insideGround = createSim({ x: 0, y: 1.5, z: 0 });

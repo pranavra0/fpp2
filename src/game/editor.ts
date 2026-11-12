@@ -3,6 +3,7 @@ import {
     Devices,
     lookAtRotation,
     Materials,
+    Meshes,
     MeshInstance,
     MeshMaterial,
     Outline,
@@ -18,7 +19,7 @@ import {
 import { viewportToWorld } from "@dylanebert/shallot/rendering";
 import { castRayClosest, emptyQueryHit } from "@dylanebert/shallot/standard/physics";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
-import { loadLevel, parseLevelDefinition, type LevelDefinition, type LevelMaterial, type LevelObjectDefinition, type Vec3Tuple } from "../content/level";
+import { loadLevel, parseLevelDefinition, type LevelDefinition, type LevelMaterial, type LevelObjectDefinition, type QuaternionTuple, type Vec3Tuple } from "../content/level";
 import { activeLevel, runtime } from "./state";
 import {
     addLevelObjectPhysics,
@@ -35,7 +36,86 @@ const HISTORY_LIMIT = 50;
 const DRAG_DISTANCE = 100;
 const MIN_OBJECT_SIZE = 0.1;
 const SNAP_STEPS = [0, 0.25, 0.5, 1] as const;
+const MOVE_AXES = ["x", "y", "z"] as const;
 const HIT = emptyQueryHit();
+
+type Axis = Exclude<TransformAxis, "free">;
+
+export function moveAxisLength(screenSize: number, halfExtent: number): number {
+    return Math.max(screenSize, halfExtent + screenSize * 0.4);
+}
+
+export function moveAxisHalfExtents(
+    scale: Vec3Tuple,
+    rotation: QuaternionTuple,
+): Vec3Tuple {
+    const cosine = Math.abs(1 - 2 * rotation[1] * rotation[1]);
+    const sine = Math.abs(2 * rotation[1] * rotation[3]);
+    const halfX = scale[0] * 0.5;
+    const halfY = scale[1] * 0.5;
+    const halfZ = scale[2] * 0.5;
+    return [
+        cosine * halfX + sine * halfZ,
+        halfY,
+        sine * halfX + cosine * halfZ,
+    ];
+}
+
+function axisVector(axis: Axis): Vec3 {
+    if (axis === "x") return { x: 1, y: 0, z: 0 };
+    if (axis === "y") return { x: 0, y: 1, z: 0 };
+    return { x: 0, y: 0, z: 1 };
+}
+
+function axisRotation(axis: Axis): readonly [number, number, number, number] {
+    const half = Math.SQRT1_2;
+    if (axis === "x") return [0, 0, -half, half];
+    if (axis === "z") return [half, 0, 0, half];
+    return [0, 0, 0, 1];
+}
+
+function arrowMeshData(): { vertices: Float32Array; indices: Uint32Array } {
+    const vertices: number[] = [];
+    const indices: number[] = [];
+    const tip: Vec3 = { x: 0, y: 0.5, z: 0 };
+    const center: Vec3 = { x: 0, y: -0.5, z: 0 };
+    const base = Array.from({ length: 6 }, (_, index): Vec3 => {
+        const angle = (index * Math.PI * 2) / 6;
+        return { x: Math.cos(angle) * 0.5, y: -0.5, z: Math.sin(angle) * 0.5 };
+    });
+
+    function triangle(a: Vec3, b: Vec3, c: Vec3): void {
+        const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+        const ac = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
+        const normal = {
+            x: ab.y * ac.z - ab.z * ac.y,
+            y: ab.z * ac.x - ab.x * ac.z,
+            z: ab.x * ac.y - ab.y * ac.x,
+        };
+        const length = Math.hypot(normal.x, normal.y, normal.z);
+        const offset = vertices.length / 8;
+        for (const point of [a, b, c])
+            vertices.push(
+                point.x,
+                point.y,
+                point.z,
+                0,
+                normal.x / length,
+                normal.y / length,
+                normal.z / length,
+                0,
+            );
+        indices.push(offset, offset + 1, offset + 2);
+    }
+
+    for (let index = 0; index < base.length; index++) {
+        const current = base[index]!;
+        const next = base[(index + 1) % base.length]!;
+        triangle(current, tip, next);
+        triangle(center, current, next);
+    }
+    return { vertices: new Float32Array(vertices), indices: new Uint32Array(indices) };
+}
 
 function cloneLevel(level: LevelDefinition): LevelDefinition {
     return structuredClone(level);
@@ -84,6 +164,20 @@ function entityFor(levelEntities: readonly LevelEntity[], id: string): LevelEnti
     return levelEntities.find((entity) => entity.id === id);
 }
 
+function sameEntityKinds(left: LevelObjectDefinition, right: LevelObjectDefinition): boolean {
+    if (
+        left.role !== right.role ||
+        left.collision.kind !== right.collision.kind ||
+        left.visual.kind !== right.visual.kind
+    )
+        return false;
+    if (left.visual.kind === "box" && right.visual.kind === "box")
+        return left.visual.material === right.visual.material;
+    if (left.visual.kind === "gltf" && right.visual.kind === "gltf")
+        return left.visual.asset === right.visual.asset;
+    return false;
+}
+
 function selectedObject(world: World): LevelObjectDefinition | undefined {
     const id = world.resource(editorState).selectedId;
     return id === null || id === "spawn" ? undefined : objectFor(activeLevel(world.resource(runtime)), id);
@@ -103,15 +197,21 @@ function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
 
     for (const entity of state.levelEntities) {
         if (nextById.has(entity.id)) continue;
-        if (world.has(entity.eid, Outline)) world.remove(entity.eid, Outline);
+        if (entity.visualEid !== undefined && world.has(entity.visualEid, Outline))
+            world.remove(entity.visualEid, Outline);
         destroyLevelEntities(world, [entity]);
     }
 
     const nextEntities = level.objects.map((object) => {
         const existing = oldById.get(object.id);
-        if (existing) {
+        if (existing && sameEntityKinds(existing.object, object)) {
             if (existing.object !== object) updateLevelEntity(world, existing, object);
             return existing;
+        }
+        if (existing) {
+            if (existing.visualEid !== undefined && world.has(existing.visualEid, Outline))
+                world.remove(existing.visualEid, Outline);
+            destroyLevelEntities(world, [existing]);
         }
         const added = addLevelObjectPhysics(world, object);
         const materials = editor.materials;
@@ -155,7 +255,7 @@ function removeOutline(world: World, id: string | null): void {
     const editor = world.resource(editorState);
     const eid = id === "spawn"
         ? editor.spawnMarker
-        : entityFor(world.resource(runtime).levelEntities, id)?.eid;
+        : entityFor(world.resource(runtime).levelEntities, id)?.visualEid;
     if (eid && world.has(eid, Outline)) world.remove(eid, Outline);
 }
 
@@ -165,13 +265,152 @@ function updateSelectionOutline(world: World): void {
     if (id === null) return;
     const eid = id === "spawn"
         ? editor.spawnMarker
-        : entityFor(world.resource(runtime).levelEntities, id)?.eid;
+        : entityFor(world.resource(runtime).levelEntities, id)?.visualEid;
     if (!eid) return;
     if (world.has(eid, Outline)) {
         world.storage(Outline).color.set(eid, editor.outlineColor);
         world.storage(Outline).width.set(eid, 5);
         world.storage(Outline).occlude.set(eid, 1);
     } else world.add(eid, Outline, { color: editor.outlineColor, width: 5, occlude: 1 });
+}
+
+function moveHandlePosition(world: World): Vec3 | undefined {
+    const editor = world.resource(editorState);
+    if (editor.selectedId === "spawn") {
+        const spawn = activeLevel(world.resource(runtime)).spawnPosition;
+        return { x: spawn[0], y: spawn[1] + 0.55, z: spawn[2] };
+    }
+    const object = selectedObject(world);
+    return object ? point(object.transform.position) : undefined;
+}
+
+function hideMoveAxisHandles(world: World, editor: EditorState): void {
+    const transform = world.storage(Transform);
+    for (const eid of [...editor.moveAxisShafts, ...editor.moveAxisHeads]) {
+        if (eid) transform.scale.set(eid, 0, 0, 0);
+    }
+    editor.moveAxisSize = 0;
+    editor.moveAxisLengths = [0, 0, 0];
+}
+
+function updateMoveAxisHandles(world: World, editor: EditorState): void {
+    if (!isEditing(editor) || editor.transformMode !== "move") {
+        hideMoveAxisHandles(world, editor);
+        return;
+    }
+    const pivot = moveHandlePosition(world);
+    if (!pivot || !editor.moveAxisArrowMesh) {
+        hideMoveAxisHandles(world, editor);
+        return;
+    }
+
+    const cameraPosition = editor.cameraPosition;
+    const distance = Math.hypot(
+        cameraPosition.x - pivot.x,
+        cameraPosition.y - pivot.y,
+        cameraPosition.z - pivot.z,
+    );
+    const canvasHeight = Math.max(1, document.querySelector("canvas")?.clientHeight ?? window.innerHeight);
+    const visibleHeight = 2 * distance * Math.tan((editor.editorCameraSettings.fov * Math.PI) / 360);
+    const size = Math.max(0.45, Math.min(3, (visibleHeight * 85) / canvasHeight));
+    editor.moveAxisSize = size;
+    const object = editor.selectedId === "spawn" ? undefined : selectedObject(world);
+    const halfExtents = object
+        ? moveAxisHalfExtents(displayedScale(object), object.transform.rotation)
+        : editor.selectedId === "spawn"
+          ? [0.14, 0.55, 0.14]
+          : [0, 0, 0];
+    editor.moveAxisLengths = halfExtents.map((extent) => moveAxisLength(size, extent!)) as [
+        number,
+        number,
+        number,
+    ];
+    const transform = world.storage(Transform);
+
+    for (let index = 0; index < MOVE_AXES.length; index++) {
+        const axisName = MOVE_AXES[index]!;
+        const axis = axisVector(axisName);
+        const rotation = axisRotation(axisName);
+        const length = editor.moveAxisLengths[index]!;
+        const headLength = size * 0.28;
+        const shaftLength = Math.max(size * 0.72, length - headLength * 0.65);
+        const shaft = editor.moveAxisShafts[index]!;
+        const head = editor.moveAxisHeads[index]!;
+        transform.translation.set(
+            shaft,
+            pivot.x + axis.x * shaftLength * 0.5,
+            pivot.y + axis.y * shaftLength * 0.5,
+            pivot.z + axis.z * shaftLength * 0.5,
+        );
+        transform.rotation.set(shaft, ...rotation);
+        transform.scale.set(shaft, size * 0.025, shaftLength, size * 0.025);
+        transform.translation.set(
+            head,
+            pivot.x + axis.x * (length - headLength * 0.5),
+            pivot.y + axis.y * (length - headLength * 0.5),
+            pivot.z + axis.z * (length - headLength * 0.5),
+        );
+        transform.rotation.set(head, ...rotation);
+        transform.scale.set(head, size * 0.16, headLength, size * 0.16);
+    }
+}
+
+function closestRayAxis(
+    ray: { origin: readonly [number, number, number]; dir: readonly [number, number, number] },
+    origin: Vec3,
+    axis: Vec3,
+): { axisParameter: number; distance: number } | undefined {
+    const dx = ray.dir[0];
+    const dy = ray.dir[1];
+    const dz = ray.dir[2];
+    const wx = ray.origin[0] - origin.x;
+    const wy = ray.origin[1] - origin.y;
+    const wz = ray.origin[2] - origin.z;
+    const directionDotAxis = dx * axis.x + dy * axis.y + dz * axis.z;
+    const directionDotOffset = dx * wx + dy * wy + dz * wz;
+    const axisDotOffset = axis.x * wx + axis.y * wy + axis.z * wz;
+    const denominator = dx * dx + dy * dy + dz * dz - directionDotAxis * directionDotAxis;
+    if (denominator < 1e-6) return undefined;
+    const rayParameter =
+        (directionDotAxis * axisDotOffset - directionDotOffset) / denominator;
+    if (rayParameter < 0) return undefined;
+    const axisParameter = axisDotOffset + directionDotAxis * rayParameter;
+    const rayX = ray.origin[0] + dx * rayParameter;
+    const rayY = ray.origin[1] + dy * rayParameter;
+    const rayZ = ray.origin[2] + dz * rayParameter;
+    const axisX = origin.x + axis.x * axisParameter;
+    const axisY = origin.y + axis.y * axisParameter;
+    const axisZ = origin.z + axis.z * axisParameter;
+    return {
+        axisParameter,
+        distance: Math.hypot(rayX - axisX, rayY - axisY, rayZ - axisZ),
+    };
+}
+
+function pickMoveAxisHandle(world: World, x: number, y: number): Axis | undefined {
+    const editor = world.resource(editorState);
+    const pivot = moveHandlePosition(world);
+    const ray = rayAt(world, x, y);
+    if (!pivot || !ray || editor.moveAxisSize <= 0 || editor.transformMode !== "move")
+        return undefined;
+    const pickRadius = editor.moveAxisSize * 0.1;
+    let selected: Axis | undefined;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    for (const axisName of MOVE_AXES) {
+        const index = MOVE_AXES.indexOf(axisName);
+        const hit = closestRayAxis(ray, pivot, axisVector(axisName));
+        if (
+            !hit ||
+            hit.axisParameter < editor.moveAxisSize * 0.16 ||
+            hit.axisParameter > editor.moveAxisLengths[index]! + editor.moveAxisSize * 0.04 ||
+            hit.distance > pickRadius ||
+            hit.distance >= closestDistance
+        )
+            continue;
+        selected = axisName;
+        closestDistance = hit.distance;
+    }
+    return selected;
 }
 
 function select(world: World, id: string | null): void {
@@ -380,7 +619,7 @@ function pick(world: World, x: number, y: number): string | null {
         selectedDistance = spawnDistance;
     }
     if (hasSurface) {
-        const surfaceId = game.levelEntities.find((entity) => entity.eid === HIT.body)?.id;
+        const surfaceId = game.levelEntities.find((entity) => entity.collisionEid === HIT.body)?.id;
         if (surfaceId !== undefined) {
             selectedId = surfaceId;
             selectedDistance = HIT.fraction * DRAG_DISTANCE;
@@ -450,6 +689,38 @@ function beginDrag(world: World, id: string, x: number, y: number): void {
         objectScale,
         before: cloneLevel(level),
         changed: false,
+        axisHandle: false,
+        axisStart: undefined,
+        axisOrigin: position,
+    };
+}
+
+function beginAxisDrag(world: World, axis: Axis, x: number, y: number): void {
+    const editor = world.resource(editorState);
+    const id = editor.selectedId;
+    if (!id) return;
+    const level = activeLevel(world.resource(runtime));
+    const object = id === "spawn" ? undefined : objectFor(level, id);
+    if (id !== "spawn" && !object) return;
+    const ray = rayAt(world, x, y);
+    const axisOrigin = moveHandlePosition(world);
+    if (!ray || !axisOrigin) return;
+    const closest = closestRayAxis(ray, axisOrigin, axisVector(axis));
+    if (!closest) return;
+    const objectPosition = id === "spawn" ? point(level.spawnPosition) : point(object!.transform.position);
+    editor.dragging = {
+        objectId: id,
+        mode: "move",
+        axis,
+        startPoint: objectPosition,
+        planeNormal: cameraForward(editor),
+        objectPosition,
+        objectScale: object ? point(displayedScale(object)) : { x: 1, y: 1, z: 1 },
+        before: cloneLevel(level),
+        changed: false,
+        axisHandle: true,
+        axisStart: closest.axisParameter,
+        axisOrigin,
     };
 }
 
@@ -459,22 +730,33 @@ function applyDrag(world: World, x: number, y: number): void {
     if (!drag) return;
     const ray = rayAt(world, x, y);
     if (!ray) return;
-    const current = intersectPlane(ray, drag.objectPosition, drag.planeNormal);
-    if (!current) return;
     const level = activeLevel(world.resource(runtime));
-    const raw = constrained(
-        {
-            x: current.x - drag.startPoint.x,
-            y: current.y - drag.startPoint.y,
-            z: current.z - drag.startPoint.z,
-        },
-        drag.axis,
-    );
-    const delta = {
-        x: snapValue(raw.x, editor.snap),
-        y: snapValue(raw.y, editor.snap),
-        z: snapValue(raw.z, editor.snap),
-    };
+    let delta: Vec3;
+    if (drag.axisHandle) {
+        if (drag.axis === "free" || drag.axisStart === undefined)
+            throw new Error("Axis drag is missing its constrained axis or start parameter");
+        const closest = closestRayAxis(ray, drag.axisOrigin, axisVector(drag.axis));
+        if (!closest) return;
+        const amount = snapValue(closest.axisParameter - drag.axisStart, editor.snap);
+        const axis = axisVector(drag.axis);
+        delta = { x: axis.x * amount, y: axis.y * amount, z: axis.z * amount };
+    } else {
+        const current = intersectPlane(ray, drag.objectPosition, drag.planeNormal);
+        if (!current) return;
+        const raw = constrained(
+            {
+                x: current.x - drag.startPoint.x,
+                y: current.y - drag.startPoint.y,
+                z: current.z - drag.startPoint.z,
+            },
+            drag.axis,
+        );
+        delta = {
+            x: snapValue(raw.x, editor.snap),
+            y: snapValue(raw.y, editor.snap),
+            z: snapValue(raw.z, editor.snap),
+        };
+    }
 
     if (drag.objectId === "spawn") {
         const spawn: Vec3Tuple = [
@@ -580,6 +862,7 @@ function addObject(
     world: World,
     role: LevelMaterial,
     duplicateId?: string,
+    modelVisual = false,
 ): void {
     const editor = world.resource(editorState);
     const level = activeLevel(world.resource(runtime));
@@ -605,27 +888,63 @@ function addObject(
                   position,
               },
           }
-        : role === "ground" || role === "platform"
+        : role === "ground"
           ? {
                 id,
                 role,
                 transform: {
                     position,
                     rotation: [0, 0, 0, 1],
-                    scale: role === "ground" ? [28, 1, 24] : [3, 0.4, 3],
+                    scale: [28, 1, 24],
                 },
-                visual: { kind: "box", material: role },
+                visual: { kind: "box", material: "ground" },
                 collision: { kind: "box", dimensions: [1, 1, 1] },
             }
+          : role === "platform" && modelVisual
+            ? {
+                  id,
+                  role,
+                  transform: {
+                      position,
+                      rotation: [0, 0, 0, 1],
+                      scale: [3, 0.4, 3],
+                  },
+                  visual: { kind: "gltf", asset: "sample-platform" },
+                  collision: { kind: "box", dimensions: [1, 1, 1] },
+              }
+            : role === "platform"
+              ? {
+                    id,
+                    role,
+                    transform: {
+                        position,
+                        rotation: [0, 0, 0, 1],
+                        scale: [3, 0.4, 3],
+                    },
+                    visual: { kind: "box", material: "platform" },
+                  collision: { kind: "box", dimensions: [1, 1, 1] },
+              }
+            : role === "goal"
+              ? {
+                    id,
+                    role,
+                    transform: {
+                        position,
+                        rotation: [0, 0, 0, 1],
+                        scale: [1.8, 2.4, 1.8],
+                    },
+                    visual: { kind: "box", material: "goal" },
+                    collision: { kind: "trigger-box", dimensions: [1, 1, 1] },
+                }
           : {
                 id,
-                role,
+                role: "checkpoint",
                 transform: {
                     position,
                     rotation: [0, 0, 0, 1],
-                    scale: role === "goal" ? [1.8, 2.4, 1.8] : [1.2, 1.8, 1.2],
+                    scale: [1.2, 1.8, 1.2],
                 },
-                visual: { kind: "box", material: role },
+                visual: { kind: "box", material: "checkpoint" },
                 collision: { kind: "trigger-box", dimensions: [1, 1, 1] },
             };
     const before = cloneLevel(level);
@@ -859,6 +1178,11 @@ function handlePointer(world: World, editor: EditorState): void {
     for (const event of pointer.buttonEvents) {
         if (event.button !== "left") continue;
         if (event.pressed) {
+            const axis = pickMoveAxisHandle(world, event.x, event.y);
+            if (axis) {
+                beginAxisDrag(world, axis, event.x, event.y);
+                continue;
+            }
             const id = pick(world, event.x, event.y);
             select(world, id);
             if (id !== null) beginDrag(world, id, event.x, event.y);
@@ -906,6 +1230,7 @@ const EditorCameraPose = {
     group: "simulation" as const,
     update(world: World): void {
         const editor = world.resource(editorState);
+        updateMoveAxisHandles(world, editor);
         if (!isEditing(editor)) return;
         const position = editor.cameraPosition;
         const forward = cameraForward(editor);
@@ -923,6 +1248,41 @@ const EditorCameraPose = {
         );
     },
 };
+
+function initializeMoveAxisHandles(world: World, editor: EditorState): void {
+    editor.moveAxisArrowMesh = world.resource(Meshes).add({
+        name: "editor-move-axis-arrow",
+        ...arrowMeshData(),
+    });
+    const colors = [
+        { color: [0.95, 0.12, 0.12, 1] as const, emissive: [0.26, 0.015, 0.015] as const },
+        { color: [0.18, 0.9, 0.2, 1] as const, emissive: [0.02, 0.22, 0.025] as const },
+        { color: [0.16, 0.38, 1, 1] as const, emissive: [0.015, 0.055, 0.3] as const },
+    ];
+    const transform = world.storage(Transform);
+    for (let index = 0; index < MOVE_AXES.length; index++) {
+        const material = world.resource(Materials).add(
+            StandardMaterial({
+                baseColor: colors[index]!.color,
+                emissive: colors[index]!.emissive,
+                perceptualRoughness: 0.55,
+            }),
+        );
+        const shaft = world.create();
+        world.add(shaft, Transform, { scale: [0, 0, 0] });
+        world.add(shaft, MeshInstance);
+        world.add(shaft, MeshMaterial, material);
+        editor.moveAxisShafts[index] = shaft;
+
+        const head = world.create();
+        world.add(head, Transform, { scale: [0, 0, 0] });
+        world.add(head, MeshInstance, { mesh: editor.moveAxisArrowMesh });
+        world.add(head, MeshMaterial, material);
+        editor.moveAxisHeads[index] = head;
+        transform.scale.set(shaft, 0, 0, 0);
+        transform.scale.set(head, 0, 0, 0);
+    }
+}
 
 const EDITOR_STYLE = `
 #fpp2-editor{position:fixed;z-index:20;top:8px;left:8px;width:min(300px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;color:#ddd;background:#161616f2;font:12px/1.35 system-ui,sans-serif;pointer-events:none}
@@ -1066,7 +1426,7 @@ function refreshUi(world: World, root: HTMLElement): void {
     const deletable = selected !== undefined && selected.role !== "ground";
     button(root, "duplicate").disabled = !duplicateable;
     button(root, "delete").disabled = !deletable;
-    for (const action of ["create-platform", "create-goal", "create-checkpoint"])
+    for (const action of ["create-platform", "create-model", "create-goal", "create-checkpoint"])
         button(root, action).disabled = editor.mode !== "edit";
     button(root, "new").disabled = editor.mode !== "edit";
     button(root, "save").disabled = editor.mode !== "edit" || !dirty(editor, level);
@@ -1096,7 +1456,7 @@ function mountEditorUi(world: World): HTMLElement {
         </section>
         <section class="editor-section" data-panel="objects">
           <span class="editor-title">Objects</span>
-          <div class="editor-actions"><button data-action="create-platform">Add platform</button><button data-action="create-goal">Add goal</button><button data-action="create-checkpoint">Add checkpoint</button></div>
+          <div class="editor-actions"><button data-action="create-platform">Add platform</button><button data-action="create-model">Add model</button><button data-action="create-goal">Add goal</button><button data-action="create-checkpoint">Add checkpoint</button></div>
           <div class="editor-actions"><button data-action="duplicate">Duplicate</button><button data-action="delete">Delete</button></div>
           <div class="editor-actions"><button data-action="undo">Undo</button><button data-action="redo">Redo</button></div>
         </section>
@@ -1121,6 +1481,7 @@ function mountEditorUi(world: World): HTMLElement {
         setMode(world, isEditing(editor) ? "play" : "edit");
     });
     button(root, "create-platform").addEventListener("click", () => addObject(world, "platform"));
+    button(root, "create-model").addEventListener("click", () => addObject(world, "platform", undefined, true));
     button(root, "create-goal").addEventListener("click", () => addObject(world, "goal"));
     button(root, "create-checkpoint").addEventListener("click", () => addObject(world, "checkpoint"));
     button(root, "duplicate").addEventListener("click", () => duplicateSelected(world));
@@ -1193,6 +1554,7 @@ export function initializeEditor(
         translation: [editor.cameraPosition.x, editor.cameraPosition.y, editor.cameraPosition.z],
     });
     world.add(editor.camera, StandardRenderer);
+    initializeMoveAxisHandles(world, editor);
     const spawnMarkerMaterial = world.resource(Materials).add(
         StandardMaterial({
             baseColor: [0.98, 0.72, 0.16, 1],

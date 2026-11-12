@@ -1,4 +1,4 @@
-import { type Resource } from "@dylanebert/shallot";
+import { type MeshHandle, type Resource } from "@dylanebert/shallot";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import type { LevelDefinition, LevelMaterial } from "../content/level";
 import type { Vec3 } from "../vec";
@@ -17,6 +17,9 @@ export type EditorDrag = {
     objectScale: Vec3;
     before: LevelDefinition;
     changed: boolean;
+    axisHandle: boolean;
+    axisStart: number | undefined;
+    axisOrigin: Vec3;
 };
 
 export type CameraSettings = {
@@ -47,6 +50,11 @@ export type EditorState = {
     dragging: EditorDrag | null;
     spawnMarker: number;
     failureMarker: number;
+    moveAxisShafts: [number, number, number];
+    moveAxisHeads: [number, number, number];
+    moveAxisArrowMesh: MeshHandle | undefined;
+    moveAxisSize: number;
+    moveAxisLengths: [number, number, number];
     materials: Record<LevelMaterial, MaterialHandle> | undefined;
     outlineColor: number;
     undo: LevelDefinition[];
@@ -86,6 +94,11 @@ export const editorState: Resource<EditorState> = {
         dragging: null,
         spawnMarker: 0,
         failureMarker: 0,
+        moveAxisShafts: [0, 0, 0],
+        moveAxisHeads: [0, 0, 0],
+        moveAxisArrowMesh: undefined,
+        moveAxisSize: 0,
+        moveAxisLengths: [0, 0, 0],
         materials: undefined,
         outlineColor: 0xffed7c,
         undo: [],

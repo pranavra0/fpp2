@@ -166,7 +166,9 @@ test("destroying level entities removes their physics surfaces", async () => {
             )?.surfaceY,
         ).toBeCloseTo(0);
 
-        const entityIds = entities.map(({ eid }) => eid);
+        const entityIds = entities.flatMap((entity) =>
+            entity.collisionEid === undefined ? [] : [entity.collisionEid],
+        );
         destroyLevelEntities(world, entities);
         world.step(Time.FIXED_DT);
         expect(entities).toHaveLength(0);
