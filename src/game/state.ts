@@ -1,12 +1,14 @@
 import { type Resource } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
-import { DEFAULT_LEVEL, type LevelDefinition } from "../content/default-level";
+import type { LevelDefinition } from "../content/level";
 import { createSim, type Controls, type Sim } from "../sim";
-import type { Vec3 } from "../vec";
+import { setVec3, type Vec3 } from "../vec";
+import type { LevelEntity } from "./physics";
 
 export type GameRuntime = {
     sim: Sim;
-    level: LevelDefinition;
+    level: LevelDefinition | undefined;
+    levelEntities: LevelEntity[];
     controls: Controls;
     pendingJumpPress: boolean;
     camera: number;
@@ -35,7 +37,8 @@ export const runtime: Resource<GameRuntime> = {
         const sim = createSim();
         return {
             sim,
-            level: DEFAULT_LEVEL,
+            level: undefined,
+            levelEntities: [],
             controls: {
                 leanX: 0,
                 leanZ: 0,
@@ -67,3 +70,34 @@ export const runtime: Resource<GameRuntime> = {
         };
     },
 };
+
+export function activeLevel(state: GameRuntime): LevelDefinition {
+    if (state.level === undefined) throw new Error("The active level has not been loaded");
+    return state.level;
+}
+
+export function resetPlayerToSpawn(state: GameRuntime): void {
+    const spawn = activeLevel(state).spawnPosition;
+    state.sim = createSim({ x: spawn[0], y: spawn[1], z: spawn[2] });
+    Object.assign(state.controls, {
+        leanX: 0,
+        leanZ: 0,
+        compress: false,
+        jumpPressed: false,
+        extend: false,
+        retract: false,
+    });
+    state.pendingJumpPress = false;
+
+    const focus = state.cameraFocus;
+    setVec3(focus, spawn[0], spawn[1] + CAMERA_TUNING.TARGET_HEIGHT_M, spawn[2]);
+    setVec3(state.previousCameraFocus, focus.x, focus.y, focus.z);
+    setVec3(state.cameraLookahead, 0, 0, 0);
+    state.impact = 0;
+    state.cameraImpact = 0;
+    state.previousCameraImpact = 0;
+    state.launchStretch = 0;
+    state.launchFovPulse = 0;
+    state.lastContactId = state.sim.pogo.contactId;
+    state.lastLaunchId = state.sim.pogo.lastLaunchedContactId;
+}

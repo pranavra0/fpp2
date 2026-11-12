@@ -1,6 +1,6 @@
 import { Devices, type World } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
-import { runtime } from "./state";
+import { resetPlayerToSpawn, runtime } from "./state";
 
 export const ReadControls = {
     name: "PogoControls",
@@ -9,8 +9,9 @@ export const ReadControls = {
         const devices = world.resource(Devices);
         const state = world.resource(runtime);
         const held = devices.keys.held;
-        const controls = state.controls;
         const active = devices.enabled;
+        if (active && devices.keys.pressed.has("KeyR")) resetPlayerToSpawn(state);
+        const controls = state.controls;
         if (active && devices.pointer.lock.status === "locked") {
             state.cameraYaw -=
                 devices.pointer.deltaX * CAMERA_TUNING.ORBIT_SENSITIVITY_RAD_PER_PX;

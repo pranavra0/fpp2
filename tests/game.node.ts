@@ -1,11 +1,24 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { createApp, Time } from "@dylanebert/shallot";
 import { TIMEOUT } from "@dylanebert/shallot/testing";
 import { DEFAULT_TUNING } from "../src/config/gameplay";
-import { addLevelPhysics, findLandingSurface, PogoWorldCollisionPlugin } from "../src/game/physics";
+import { parseLevelDefinition } from "../src/content/level";
+import {
+    addLevelPhysics,
+    destroyLevelEntities,
+    findLandingSurface,
+    LandingSurface,
+    PogoWorldCollisionPlugin,
+} from "../src/game/physics";
 import { createSim, NEUTRAL_CONTROLS, step, type LandingSweep } from "../src/sim";
 
 setDefaultTimeout(TIMEOUT.node);
+
+async function readPrototypeLevel() {
+    const text = await readFile(new URL("../public/levels/prototype.json", import.meta.url), "utf8");
+    return parseLevelDefinition(JSON.parse(text));
+}
 
 function sweep(
     previousTip: LandingSweep["previousTip"],
@@ -18,11 +31,12 @@ function sweep(
 }
 
 test("Shallot static-shape queries preserve platform and ground landing bounds", async () => {
+    const level = await readPrototypeLevel();
     const app = await createApp({
         defaults: false,
         plugins: [PogoWorldCollisionPlugin],
         setup(world) {
-            addLevelPhysics(world);
+            addLevelPhysics(world, level);
         },
     });
     try {
@@ -52,6 +66,12 @@ test("Shallot static-shape queries preserve platform and ground landing bounds",
                 sweep({ x: 5.13, y: 2.7, z: -2 }, { x: 5.13, y: 2.5, z: -2 }),
             ),
         ).toBeUndefined();
+        expect(
+            findLandingSurface(
+                world,
+                sweep({ x: 13.9, y: 0.1, z: 0 }, { x: 13.9, y: -0.1, z: 0 }),
+            )?.surfaceY,
+        ).toBeCloseTo(0);
         expect(
             findLandingSurface(
                 world,
@@ -93,18 +113,88 @@ test("Shallot static-shape queries preserve platform and ground landing bounds",
     }
 });
 
-test("fixed-step pogo movement lands and launches through Shallot collision queries", async () => {
+test("rotated platforms and independent collision dimensions come from level data", async () => {
+    const level = await readFile(
+        new URL("../public/levels/alternate.json", import.meta.url),
+        "utf8",
+    ).then((text) => parseLevelDefinition(JSON.parse(text)));
     const app = await createApp({
         defaults: false,
         plugins: [PogoWorldCollisionPlugin],
         setup(world) {
-            addLevelPhysics(world);
+            addLevelPhysics(world, level);
         },
     });
     try {
         const { world } = app;
         world.step(Time.FIXED_DT);
-        const sim = createSim(3);
+
+        expect(
+            findLandingSurface(
+                world,
+                sweep({ x: 4.75, y: 4.76, z: -2 }, { x: 4.75, y: 4.6, z: -2 }),
+            )?.surfaceY,
+        ).toBeCloseTo(4.664);
+        expect(
+            findLandingSurface(
+                world,
+                sweep({ x: 1.4, y: 2.7, z: 1 }, { x: 1.4, y: 2.5, z: 1 }),
+            ),
+        ).toBeUndefined();
+    } finally {
+        app.dispose();
+    }
+});
+
+test("destroying level entities removes their physics surfaces", async () => {
+    const level = await readPrototypeLevel();
+    let entities: ReturnType<typeof addLevelPhysics> = [];
+    const app = await createApp({
+        defaults: false,
+        plugins: [PogoWorldCollisionPlugin],
+        setup(world) {
+            entities = addLevelPhysics(world, level);
+        },
+    });
+    try {
+        const { world } = app;
+        world.step(Time.FIXED_DT);
+        expect(
+            findLandingSurface(
+                world,
+                sweep({ x: 0, y: 0.1, z: 0 }, { x: 0, y: -0.1, z: 0 }),
+            )?.surfaceY,
+        ).toBeCloseTo(0);
+
+        const entityIds = entities.map(({ eid }) => eid);
+        destroyLevelEntities(world, entities);
+        world.step(Time.FIXED_DT);
+        expect(entities).toHaveLength(0);
+        expect(entityIds.every((eid) => !world.has(eid, LandingSurface))).toBe(true);
+        expect(
+            findLandingSurface(
+                world,
+                sweep({ x: 0, y: 0.1, z: 0 }, { x: 0, y: -0.1, z: 0 }),
+            ),
+        ).toBeUndefined();
+    } finally {
+        app.dispose();
+    }
+});
+
+test("fixed-step pogo movement lands and launches through Shallot collision queries", async () => {
+    const level = await readPrototypeLevel();
+    const app = await createApp({
+        defaults: false,
+        plugins: [PogoWorldCollisionPlugin],
+        setup(world) {
+            addLevelPhysics(world, level);
+        },
+    });
+    try {
+        const { world } = app;
+        world.step(Time.FIXED_DT);
+        const sim = createSim({ x: 0, y: 3, z: 0 });
         const contacts = new Set<number>();
         let previousLaunch = sim.pogo.lastLaunchedContactId;
         let firstLaunchVelocity: number | undefined;
@@ -128,17 +218,18 @@ test("fixed-step pogo movement lands and launches through Shallot collision quer
 
 
 test("charged launch through Shallot contact retains lean and horizontal carry", async () => {
+    const level = await readPrototypeLevel();
     const app = await createApp({
         defaults: false,
         plugins: [PogoWorldCollisionPlugin],
         setup(world) {
-            addLevelPhysics(world);
+            addLevelPhysics(world, level);
         },
     });
     try {
         const { world } = app;
         world.step(Time.FIXED_DT);
-        const sim = createSim(1.1);
+        const sim = createSim({ x: 0, y: 1.1, z: 0 });
         sim.body.vel.y = -1;
         for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ; tick++) {
             step(sim, DEFAULT_TUNING, NEUTRAL_CONTROLS, (path) =>

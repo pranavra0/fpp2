@@ -1,0 +1,51 @@
+{
+  "formatVersion": 1,
+  "id": "prototype",
+  "spawnPosition": [0, 2, 0],
+  "objects": [
+    {
+      "id": "ground",
+      "role": "ground",
+      "transform": {
+        "position": [0, -0.5, 0],
+        "rotation": [0, 0, 0, 1],
+        "scale": [28, 1, 24]
+      },
+      "visual": { "kind": "box", "material": "ground" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] }
+    },
+    {
+      "id": "platform-1",
+      "role": "platform",
+      "transform": {
+        "position": [3, 2.42, -2],
+        "rotation": [0, 0, 0, 1],
+        "scale": [4, 0.36, 5.5]
+      },
+      "visual": { "kind": "box", "material": "platform" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] }
+    },
+    {
+      "id": "platform-2",
+      "role": "platform",
+      "transform": {
+        "position": [-3, 5.02, 3],
+        "rotation": [0, 0, 0, 1],
+        "scale": [4, 0.36, 5.5]
+      },
+      "visual": { "kind": "box", "material": "platform" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] }
+    },
+    {
+      "id": "platform-3",
+      "role": "platform",
+      "transform": {
+        "position": [3, 7.62, -3],
+        "rotation": [0, 0, 0, 1],
+        "scale": [4, 0.36, 5.5]
+      },
+      "visual": { "kind": "box", "material": "platform" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] }
+    }
+  ]
+}

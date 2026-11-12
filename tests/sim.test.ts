@@ -22,7 +22,7 @@ function stepOnGround(
 
 describe("pogo simulation", () => {
     test("automatically bounces with stable launch height and unique contacts", () => {
-        const sim = createSim(3);
+        const sim = createSim({ x: 0, y: 3, z: 0 });
         const apexHeights: number[] = [];
         const launchedContacts = new Set<number>();
         let previousVelocityY = sim.body.vel.y;
@@ -57,7 +57,7 @@ describe("pogo simulation", () => {
     });
 
     test("charged launch follows pole lean and keeps horizontal carry", () => {
-        const sim = createSim(1.1);
+        const sim = createSim({ x: 0, y: 1.1, z: 0 });
         sim.body.vel.y = -1;
         for (let tick = 0; tick < DEFAULT_TUNING.SIM_HZ; tick++) {
             stepOnGround(sim);
@@ -78,7 +78,7 @@ describe("pogo simulation", () => {
     });
 
     test("buffers a charge press during descent", () => {
-        const sim = createSim(1.12);
+        const sim = createSim({ x: 0, y: 1.12, z: 0 });
         sim.body.vel.y = -2;
         stepOnGround(sim, { ...NEUTRAL_CONTROLS, jumpPressed: true });
         let launched = false;

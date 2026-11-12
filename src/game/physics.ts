@@ -15,34 +15,46 @@ import {
     type ShapeProxy,
 } from "@dylanebert/shallot/standard/physics";
 import { DEFAULT_TUNING, type Tuning } from "../config/gameplay";
-import { DEFAULT_LEVEL, type BoxSurface, type LevelDefinition } from "../content/default-level";
+import {
+    levelSurfaceContains,
+    levelSurfaces,
+    type LevelDefinition,
+    type LevelObjectDefinition,
+    type LevelSurface,
+} from "../content/level";
 import { landingAlpha, type LandingContact, type LandingSweep } from "../sim";
 
 export const LandingSurface = component("LandingSurface", {
     centerX: f32,
     centerZ: f32,
+    rotationY: f32,
     topY: f32,
     width: f32,
     depth: f32,
     edgeTolerance: f32,
 });
 
+export type LevelEntity = { id: string; eid: number; object: LevelObjectDefinition };
+
 function addSurface(
     world: World,
     geometry: number,
-    surface: BoxSurface,
+    object: LevelObjectDefinition,
+    surface: LevelSurface,
     edgeTolerance: number,
 ): number {
     const eid = world.create();
     world.add(eid, Transform, {
-        translation: [surface.centerX, surface.topY - surface.thickness * 0.5, surface.centerZ],
-        scale: [surface.width, surface.thickness, surface.depth],
+        translation: object.transform.position,
+        rotation: object.transform.rotation,
+        scale: object.transform.scale,
     });
     world.add(eid, Body);
-    world.add(eid, Shape, { geometry });
+    world.add(eid, Shape, { geometry, scale: object.collision.dimensions });
     world.add(eid, LandingSurface, {
         centerX: surface.centerX,
         centerZ: surface.centerZ,
+        rotationY: surface.rotationY,
         topY: surface.topY,
         width: surface.width,
         depth: surface.depth,
@@ -53,16 +65,27 @@ function addSurface(
 
 export function addLevelPhysics(
     world: World,
-    level: LevelDefinition = DEFAULT_LEVEL,
+    level: LevelDefinition,
     tuning: Tuning = DEFAULT_TUNING,
-): { ground: number; platforms: number[] } {
+): LevelEntity[] {
     const geometry = world.resource(Hulls).add({ name: "level-box", halfExtents: [0.5, 0.5, 0.5] });
-    return {
-        ground: addSurface(world, geometry, level.ground, 0),
-        platforms: level.platforms.map((surface) =>
-            addSurface(world, geometry, surface, tuning.LANDING_EDGE_TOLERANCE_M),
-        ),
-    };
+    const surfaces = new Map(levelSurfaces(level).map((surface) => [surface.id, surface]));
+    return level.objects.map((object) => {
+        const surface = surfaces.get(object.id);
+        if (!surface) throw new Error(`Level surface missing for object "${object.id}"`);
+        const edgeTolerance =
+            object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
+        return {
+            id: object.id,
+            eid: addSurface(world, geometry, object, surface, edgeTolerance),
+            object,
+        };
+    });
+}
+
+export function destroyLevelEntities(world: World, entities: LevelEntity[]): void {
+    for (const { eid } of entities) world.destroy(eid);
+    entities.length = 0;
 }
 
 function tipProxy(edgeTolerance: number, halfHeight: number): ShapeProxy {
@@ -99,11 +122,23 @@ export function findLandingSurface(
         if (alpha === undefined || alpha >= bestAlpha) return 1;
         const x = sweep.previousTip.x + translation.x * alpha;
         const z = sweep.previousTip.z + translation.z * alpha;
+        const surface: Pick<
+            LevelSurface,
+            "centerX" | "centerZ" | "rotationY" | "width" | "depth"
+        > = {
+            centerX: surfaces.centerX.get(eid),
+            centerZ: surfaces.centerZ.get(eid),
+            rotationY: surfaces.rotationY.get(eid),
+            width: surfaces.width.get(eid),
+            depth: surfaces.depth.get(eid),
+        };
         if (
-            Math.abs(x - surfaces.centerX.get(eid)) >
-                surfaces.width.get(eid) * 0.5 + surfaces.edgeTolerance.get(eid) ||
-            Math.abs(z - surfaces.centerZ.get(eid)) >
-                surfaces.depth.get(eid) * 0.5 + surfaces.edgeTolerance.get(eid)
+            !levelSurfaceContains(
+                surface,
+                x,
+                z,
+                surfaces.edgeTolerance.get(eid),
+            )
         )
             return 1;
         bestAlpha = alpha;

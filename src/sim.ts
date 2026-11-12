@@ -46,11 +46,11 @@ export const NEUTRAL_CONTROLS: Controls = {
     retract: false,
 };
 
-export function createSim(bodyY = 2): Sim {
+export function createSim(spawn: Vec3 = { x: 0, y: 2, z: 0 }): Sim {
     return {
         tick: 0,
         body: {
-            pos: { x: 0, y: bodyY, z: 0 },
+            pos: { ...spawn },
             vel: { x: 0, y: 0, z: 0 },
         },
         pole: {

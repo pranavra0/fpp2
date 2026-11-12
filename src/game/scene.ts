@@ -15,10 +15,12 @@ import {
 } from "@dylanebert/shallot";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import { CAMERA_TUNING } from "../config/camera";
+import { loadLevel } from "../content/level";
 import { addLevelPhysics } from "./physics";
+import { addLevelRendering } from "./level-rendering";
 import { predictLanding } from "./presentation";
 import { cameraPosition } from "./camera";
-import { runtime } from "./state";
+import { activeLevel, resetPlayerToSpawn, runtime } from "./state";
 
 function box(
     world: World,
@@ -33,9 +35,15 @@ function box(
     return eid;
 }
 
-export function initializeGame(world: World): void {
+export async function initializeGame(world: World): Promise<void> {
     requirePointerLock(world, true);
     world.onDispose(() => releasePointerLock(world));
+
+    const state = world.resource(runtime);
+    const selectedLevel = new URLSearchParams(window.location.search).get("level") ?? "prototype";
+    state.level = await loadLevel(selectedLevel);
+    resetPlayerToSpawn(state);
+    const levelDefinition = activeLevel(state);
 
     const ambient = world.resource(GlobalAmbientLight);
     ambient.color = 0xc9d8ee;
@@ -45,7 +53,6 @@ export function initializeGame(world: World): void {
     world.add(sun, Transform, { rotation: lookAtRotation(-8, 12, 10, 0, 2, 0) });
     world.add(sun, DirectionalLight, { color: 0xfff0dc, illuminance: 5000 });
 
-    const state = world.resource(runtime);
     const camera = world.create();
     const initialCameraPosition = cameraPosition(
         state.cameraFocus,
@@ -88,18 +95,18 @@ export function initializeGame(world: World): void {
         StandardMaterial({ baseColor: [0.25, 0.68, 0.53, 1], perceptualRoughness: 0.55 }),
     );
 
-    const level = addLevelPhysics(world, state.level);
-    world.add(level.ground, MeshInstance);
-    world.add(level.ground, MeshMaterial, groundMaterial);
-    for (const eid of level.platforms) {
-        world.add(eid, MeshInstance);
-        world.add(eid, MeshMaterial, platformMaterial);
-    }
+    const levelObjects = addLevelPhysics(world, levelDefinition);
+    addLevelRendering(world, levelObjects, {
+        ground: groundMaterial,
+        platform: platformMaterial,
+    });
+    state.levelEntities = levelObjects;
 
-    const body = box(world, bodyMaterial, [0, state.sim.body.pos.y, 0], [0.65, 0.82, 0.65]);
-    const pole = box(world, poleMaterial, [0, state.sim.body.pos.y - 0.5, 0], [0.14, 1, 0.14]);
-    const tip = box(world, tipMaterial, [0, state.sim.body.pos.y - 1, 0], [0.34, 0.2, 0.34]);
-    const initialPrediction = predictLanding(state.sim, state.level);
+    const { x, y, z } = state.sim.body.pos;
+    const body = box(world, bodyMaterial, [x, y, z], [0.65, 0.82, 0.65]);
+    const pole = box(world, poleMaterial, [x, y - 0.5, z], [0.14, 1, 0.14]);
+    const tip = box(world, tipMaterial, [x, y - 1, z], [0.34, 0.2, 0.34]);
+    const initialPrediction = predictLanding(state.sim, levelDefinition);
     const initialMarkerPosition = initialPrediction?.position ?? { x: 0, y: 0, z: 0 };
     const initialValidMarker = initialPrediction?.certain ?? false;
     const validMarkerMaterial = materials.add(
