@@ -6,15 +6,72 @@ import type { Plugin } from "vite";
 import { parseLevelDefinition } from "./src/content/level.ts";
 
 const MAX_LEVEL_BYTES = 256 * 1024;
+const MAX_MODEL_BYTES = 64 * 1024 * 1024;
 
-function projectLevels(): Plugin {
+export function projectLevels(): Plugin {
     return {
         name: "fpp2-project-levels",
         apply: "serve",
         configureServer(server) {
             const levelDirectory = resolve(server.config.root, "public", "levels");
+            const modelDirectory = resolve(server.config.root, "public", "models");
             server.middlewares.use(async (request, response, next) => {
                 const url = new URL(request.url ?? "/", "http://localhost");
+                if (url.pathname === "/__editor/models" && request.method === "GET") {
+                    try {
+                        const files = await readdir(modelDirectory, { withFileTypes: true });
+                        const assets = files
+                            .filter((entry) =>
+                                entry.isFile() && /^[A-Za-z0-9][A-Za-z0-9_-]*\.glb$/.test(entry.name),
+                            )
+                            .map((entry) => entry.name.slice(0, -4))
+                            .sort((left, right) => left.localeCompare(right));
+                        sendJson(response, 200, assets);
+                    } catch (error) {
+                        sendJson(response, 500, { error: errorMessage(error) });
+                    }
+                    return;
+                }
+                if (url.pathname === "/__editor/models" && request.method === "POST") {
+                    if (!request.headers["content-type"]?.includes("application/octet-stream")) {
+                        sendJson(response, 415, { error: "Expected application/octet-stream" });
+                        return;
+                    }
+                    try {
+                        const bytes = await readBodyBytes(request, MAX_MODEL_BYTES);
+                        if (
+                            bytes.byteLength < 12 ||
+                            bytes.readUInt32LE(0) !== 0x46546c67 ||
+                            bytes.readUInt32LE(4) !== 2 ||
+                            bytes.readUInt32LE(8) !== bytes.byteLength
+                        )
+                            throw new Error("Expected a valid glTF 2.0 binary file");
+
+                        const asset = `model-${randomUUID()}`;
+                        const target = resolve(modelDirectory, `${asset}.glb`);
+                        if (resolve(target, "..") !== modelDirectory)
+                            throw new Error("Invalid model path");
+                        const temporary = resolve(modelDirectory, `.${asset}.${randomUUID()}.tmp`);
+                        await writeFile(temporary, bytes, { flag: "wx" });
+                        try {
+                            await link(temporary, target);
+                            await unlink(temporary);
+                        } catch (error) {
+                            await unlink(temporary).catch(() => {});
+                            if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+                                sendJson(response, 409, { error: `Model asset "${asset}" already exists` });
+                                return;
+                            }
+                            throw error;
+                        }
+                        sendJson(response, 201, { asset, path: `public/models/${asset}.glb` });
+                    } catch (error) {
+                        const status = error instanceof Error && error.name === "BodyLimitError" ? 413 : 400;
+                        sendJson(response, status, { error: errorMessage(error) });
+                    }
+                    return;
+                }
+
                 if (url.pathname === "/__editor/levels" && request.method === "GET") {
                     try {
                         const files = await readdir(levelDirectory, { withFileTypes: true });
@@ -126,6 +183,25 @@ async function readBody(request: import("node:http").IncomingMessage): Promise<s
         chunks.push(bytes);
     }
     return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readBodyBytes(
+    request: import("node:http").IncomingMessage,
+    maximumBytes: number,
+): Promise<Buffer> {
+    const chunks: Buffer[] = [];
+    let length = 0;
+    for await (const chunk of request) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        length += bytes.byteLength;
+        if (length > maximumBytes) {
+            const error = new Error(`Model file exceeds ${maximumBytes / 1024 / 1024} MB`);
+            error.name = "BodyLimitError";
+            throw error;
+        }
+        chunks.push(bytes);
+    }
+    return Buffer.concat(chunks);
 }
 
 function sendJson(response: import("node:http").ServerResponse, status: number, value: unknown): void {

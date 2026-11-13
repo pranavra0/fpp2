@@ -25,3 +25,9 @@ test("move axis bounds account for Y-rotated platform extents", () => {
     expect(halfZ).toBeCloseTo(2);
     expect(moveAxisLength(0.88, halfZ)).toBeGreaterThan(halfZ);
 });
+
+test("move axis bounds include the imported model's local dimensions", () => {
+    const extents = moveAxisHalfExtents([2, 3, 4], [0, 0, 0, 1], [1, 0.5, 2]);
+
+    expect(extents).toEqual([2, 1.5, 8]);
+});

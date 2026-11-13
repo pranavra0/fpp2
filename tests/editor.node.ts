@@ -28,7 +28,7 @@ test("editing an authored platform updates its render transform and landing geom
         const platform = entities.find((entity) => entity.id === "platform-1");
         if (!platform) throw new Error("platform-1 is missing from the test level");
         const platformVisualEid = world.create();
-        platform.visualEid = platformVisualEid;
+        platform.visualEids = [platformVisualEid];
         world.add(platformVisualEid, Transform, {
             translation: platform.object.transform.position,
             rotation: platform.object.transform.rotation,
@@ -93,7 +93,7 @@ test("editing a trigger updates its visible volume without adding physical colli
         const entity = entities.find((candidate) => candidate.id === checkpoint.id);
         if (!entity) throw new Error("checkpoint entity is missing");
         const triggerVisualEid = world.create();
-        entity.visualEid = triggerVisualEid;
+        entity.visualEids = [triggerVisualEid];
         world.add(triggerVisualEid, Transform, {
             translation: checkpoint.transform.position,
             rotation: checkpoint.transform.rotation,

@@ -2,7 +2,7 @@ export type Vec3Tuple = readonly [number, number, number];
 export type QuaternionTuple = readonly [number, number, number, number];
 export type LevelObjectRole = "ground" | "platform" | "goal" | "checkpoint";
 export type LevelMaterial = LevelObjectRole;
-export type LevelAssetId = "sample-platform";
+export type LevelAssetId = string;
 
 type LevelObjectBase = {
     id: string;
@@ -143,8 +143,8 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         if (role !== "platform")
             invalid(`${path}.visual.kind`, 'glTF visuals are supported only for "platform" objects');
         const asset = string(visualInput.asset, `${path}.visual.asset`);
-        if (asset !== "sample-platform")
-            invalid(`${path}.visual.asset`, 'expected the known asset ID "sample-platform"');
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(asset))
+            invalid(`${path}.visual.asset`, "must be a model filename without its .glb extension");
         visual = { kind: "gltf", asset };
     } else {
         invalid(`${path}.visual.kind`, 'expected "box" or "gltf"');

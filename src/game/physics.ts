@@ -37,7 +37,7 @@ export const LandingSurface = component("LandingSurface", {
 export type LevelEntity = {
     id: string;
     collisionEid?: number;
-    visualEid?: number;
+    visualEids?: number[];
     object: LevelObjectDefinition;
 };
 
@@ -106,7 +106,7 @@ export function addLevelObjectPhysics(
 
 export function destroyLevelEntities(world: World, entities: LevelEntity[]): void {
     for (const entity of entities) {
-        if (entity.visualEid !== undefined) world.destroy(entity.visualEid);
+        for (const visualEid of entity.visualEids ?? []) world.destroy(visualEid);
         if (entity.collisionEid !== undefined) world.destroy(entity.collisionEid);
     }
     entities.length = 0;
@@ -147,7 +147,7 @@ export function updateLevelEntity(
     } else if (entity.collisionEid !== undefined) {
         throw new Error(`Trigger object "${entity.id}" cannot have a collision entity`);
     }
-    if (entity.visualEid !== undefined) {
+    if (object.visual.kind === "box") {
         const visualScale = object.collision.kind === "trigger-box"
             ? [
                   object.transform.scale[0] * object.collision.dimensions[0],
@@ -155,9 +155,11 @@ export function updateLevelEntity(
                   object.transform.scale[2] * object.collision.dimensions[2],
               ] as const
             : object.transform.scale;
-        world.storage(Transform).translation.set(entity.visualEid, ...object.transform.position);
-        world.storage(Transform).rotation.set(entity.visualEid, ...object.transform.rotation);
-        world.storage(Transform).scale.set(entity.visualEid, ...visualScale);
+        for (const visualEid of entity.visualEids ?? []) {
+            world.storage(Transform).translation.set(visualEid, ...object.transform.position);
+            world.storage(Transform).rotation.set(visualEid, ...object.transform.rotation);
+            world.storage(Transform).scale.set(visualEid, ...visualScale);
+        }
     }
     entity.object = object;
 }

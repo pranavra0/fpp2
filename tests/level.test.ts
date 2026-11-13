@@ -73,7 +73,7 @@ test("level validation rejects duplicate identifiers and invalid dimensions", as
     );
 });
 
-test("level validation accepts the static platform asset ID and rejects unsupported visuals", async () => {
+test("level validation accepts reusable platform asset IDs and rejects unsafe IDs", async () => {
     const prototype = await readLevelFile("prototype");
     const platformIndex = prototype.objects.findIndex((object) => object.role === "platform");
     const modelLevel = structuredClone(prototype);
@@ -86,10 +86,27 @@ test("level validation accepts the static platform asset ID and rejects unsuppor
         asset: "sample-platform",
     });
 
-    const unknownAsset = structuredClone(modelLevel);
-    (unknownAsset.objects[platformIndex] as { visual: { kind: string; asset: string } }).visual.asset = "unknown";
-    expect(() => parseLevelDefinition(unknownAsset)).toThrow(
-        'level.objects[1].visual.asset: expected the known asset ID "sample-platform"',
+    const importedModelLevel = structuredClone(modelLevel);
+    (importedModelLevel.objects[platformIndex] as { visual: { kind: string; asset: string } }).visual.asset =
+        "model-01234567-abcd-4abc-8def-0123456789ab";
+    expect(parseLevelDefinition(importedModelLevel).objects[platformIndex]?.visual).toEqual({
+        kind: "gltf",
+        asset: "model-01234567-abcd-4abc-8def-0123456789ab",
+    });
+
+    const projectModelLevel = structuredClone(modelLevel);
+    (projectModelLevel.objects[platformIndex] as { visual: { kind: string; asset: string } }).visual.asset =
+        "Duck";
+    expect(parseLevelDefinition(projectModelLevel).objects[platformIndex]?.visual).toEqual({
+        kind: "gltf",
+        asset: "Duck",
+    });
+
+    const unsafeAsset = structuredClone(modelLevel);
+    (unsafeAsset.objects[platformIndex] as { visual: { kind: string; asset: string } }).visual.asset =
+        "../outside";
+    expect(() => parseLevelDefinition(unsafeAsset)).toThrow(
+        "level.objects[1].visual.asset: must be a model filename without its .glb extension",
     );
 
     const modelGround = structuredClone(modelLevel);

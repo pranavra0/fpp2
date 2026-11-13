@@ -12,10 +12,11 @@ import type {
     LevelDefinition,
     LevelMaterial,
     LevelObjectDefinition,
+    Vec3Tuple,
 } from "../content/level";
 import type { LevelEntity } from "./physics";
 
-export const LEVEL_ASSET_URLS: Record<LevelAssetId, string> = {
+export const LEVEL_ASSET_URLS: Partial<Record<LevelAssetId, string>> = {
     "sample-platform": "/models/sample-platform.glb",
 };
 
@@ -32,17 +33,30 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-function validateSamplePlatform(gltf: Gltf): void {
-    if (gltf.primitives.length !== 1)
-        throw new Error(`expected one primitive, received ${gltf.primitives.length}`);
+function validateStaticModel(gltf: Gltf): void {
+    if (gltf.primitives.length === 0) throw new Error("expected at least one mesh primitive");
     if (gltf.lights.length !== 0) throw new Error("expected no lights");
     if (gltf.animations.length !== 0) throw new Error("expected no animations");
     if (gltf.skins.length !== 0) throw new Error("expected no skins");
-    if (gltf.primitives[0]!.skin >= 0) throw new Error("expected a static primitive");
-    if (gltf.primitives[0]!.morphReach) throw new Error("expected a primitive without morph targets");
+    if (gltf.primitives.some((primitive) => primitive.skin >= 0))
+        throw new Error("expected static mesh primitives");
+    if (gltf.primitives.some((primitive) => primitive.morphReach))
+        throw new Error("expected primitives without morph targets");
+    const unsupported = gltf.unsupported.filter((feature) => feature !== "camera");
+    if (unsupported.length > 0)
+        throw new Error(`contains unsupported glTF features: ${unsupported.join(", ")}`);
+}
+
+function validateSamplePlatform(gltf: Gltf): void {
+    if (gltf.primitives.length !== 1)
+        throw new Error(`expected one primitive, received ${gltf.primitives.length}`);
     const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
     if (gltf.primitives[0]!.matrix.some((value, index) => value !== identity[index]))
         throw new Error("expected an identity primitive transform");
+}
+
+function assetPath(asset: LevelAssetId): string {
+    return LEVEL_ASSET_URLS[asset] ?? `/models/${asset}.glb`;
 }
 
 export async function loadLevelAsset(world: World, asset: LevelAssetId): Promise<Gltf> {
@@ -52,10 +66,11 @@ export async function loadLevelAsset(world: World, asset: LevelAssetId): Promise
     const inFlight = cache.loads.get(asset);
     if (inFlight) return inFlight;
 
-    const path = LEVEL_ASSET_URLS[asset];
+    const path = assetPath(asset);
     const baseUrl = typeof document === "undefined" ? "http://localhost/" : document.baseURI;
     const url = new URL(path, baseUrl);
     const loading = loadGltfScene(world, url).then((gltf) => {
+        validateStaticModel(gltf);
         if (asset === "sample-platform") validateSamplePlatform(gltf);
         cache.handles.set(asset, gltf);
         return gltf;
@@ -69,6 +84,32 @@ export async function loadLevelAsset(world: World, asset: LevelAssetId): Promise
     });
     cache.loads.set(asset, loading);
     return loading;
+}
+
+export async function loadModelFile(world: World, file: Blob): Promise<Gltf> {
+    const url = URL.createObjectURL(file);
+    try {
+        const gltf = await loadGltfScene(world, url);
+        validateStaticModel(gltf);
+        return gltf;
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+export function cacheLevelAsset(world: World, asset: LevelAssetId, gltf: Gltf): void {
+    if (gltf.world !== world) throw new Error(`glTF asset "${asset}" belongs to another world`);
+    world.resource(levelAssetCache).handles.set(asset, gltf);
+}
+
+export function modelLocalHalfExtents(world: World, asset: LevelAssetId): Vec3Tuple {
+    const gltf = world.resource(levelAssetCache).handles.get(asset);
+    if (!gltf) throw new Error(`glTF asset "${asset}" has not been loaded`);
+    return [
+        Math.max(Math.abs(gltf.bounds.min[0]), Math.abs(gltf.bounds.max[0])),
+        Math.max(Math.abs(gltf.bounds.min[1]), Math.abs(gltf.bounds.max[1])),
+        Math.max(Math.abs(gltf.bounds.min[2]), Math.abs(gltf.bounds.max[2])),
+    ];
 }
 
 export async function loadLevelAssets(world: World, level: LevelDefinition): Promise<void> {
@@ -113,21 +154,43 @@ export function addLevelRendering(
     for (const entity of objects) {
         const { object } = entity;
         if (object.visual.kind === "box") {
-            entity.visualEid = addBoxVisual(world, object, materials[object.visual.material]);
+            entity.visualEids = [addBoxVisual(world, object, materials[object.visual.material])];
             continue;
         }
         const gltf = cache.handles.get(object.visual.asset);
         if (!gltf)
             throw new Error(
-                `glTF asset "${object.visual.asset}" was not loaded from ${LEVEL_ASSET_URLS[object.visual.asset]}`,
+                `glTF asset "${object.visual.asset}" was not loaded from ${assetPath(object.visual.asset)}`,
             );
         const placement = spawnGltfScene(world, gltf, {
             translation: object.transform.position,
             rotation: object.transform.rotation,
             scale: object.transform.scale,
         });
-        if (placement.entities.length !== 1 || placement.lightEntities.length !== 0)
+        if (placement.entities.length === 0 || placement.lightEntities.length !== 0)
             throw new Error(`glTF asset "${object.visual.asset}" does not match its static placement contract`);
-        entity.visualEid = placement.entities[0]!;
+        entity.visualEids = placement.entities;
     }
+}
+
+export function updateLevelRendering(
+    world: World,
+    entity: LevelEntity,
+    object: LevelObjectDefinition,
+): void {
+    if (object.visual.kind !== "gltf") return;
+    const gltf = world.resource(levelAssetCache).handles.get(object.visual.asset);
+    if (!gltf)
+        throw new Error(
+            `glTF asset "${object.visual.asset}" was not loaded from ${assetPath(object.visual.asset)}`,
+        );
+    const placement = spawnGltfScene(world, gltf, {
+        translation: object.transform.position,
+        rotation: object.transform.rotation,
+        scale: object.transform.scale,
+    });
+    if (placement.entities.length === 0 || placement.lightEntities.length !== 0)
+        throw new Error(`glTF asset "${object.visual.asset}" does not match its static placement contract`);
+    for (const eid of entity.visualEids ?? []) world.destroy(eid);
+    entity.visualEids = placement.entities;
 }

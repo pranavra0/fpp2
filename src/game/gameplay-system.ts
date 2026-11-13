@@ -24,14 +24,16 @@ function setCheckpointMaterials(world: World): void {
     const meshMaterials = world.storage(MeshMaterial).material;
     for (const entity of state.levelEntities) {
         if (entity.object.role !== "checkpoint") continue;
-        if (entity.visualEid === undefined)
+        if (!entity.visualEids || entity.visualEids.length === 0)
             throw new Error(`Checkpoint visual missing for level object "${entity.id}"`);
-        meshMaterials.set(
-            entity.visualEid,
-            entity.id === progress.checkpointId
-                ? state.activeCheckpointMaterial
-                : state.levelMaterials.checkpoint,
-        );
+        for (const visualEid of entity.visualEids) {
+            meshMaterials.set(
+                visualEid,
+                entity.id === progress.checkpointId
+                    ? state.activeCheckpointMaterial
+                    : state.levelMaterials.checkpoint,
+            );
+        }
     }
 }
 

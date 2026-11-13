@@ -61,6 +61,7 @@ export type EditorState = {
     redo: LevelDefinition[];
     saved: LevelDefinition | undefined;
     levelIds: string[];
+    modelIds: string[];
     status: string;
     refreshUi: boolean;
     previousPointerX: number;
@@ -105,6 +106,7 @@ export const editorState: Resource<EditorState> = {
         redo: [],
         saved: undefined,
         levelIds: [],
+        modelIds: [],
         status: "",
         refreshUi: true,
         previousPointerX: 0,

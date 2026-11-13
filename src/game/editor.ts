@@ -19,7 +19,16 @@ import {
 import { viewportToWorld } from "@dylanebert/shallot/rendering";
 import { castRayClosest, emptyQueryHit } from "@dylanebert/shallot/standard/physics";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
-import { loadLevel, parseLevelDefinition, type LevelDefinition, type LevelMaterial, type LevelObjectDefinition, type QuaternionTuple, type Vec3Tuple } from "../content/level";
+import {
+    loadLevel,
+    parseLevelDefinition,
+    type LevelAssetId,
+    type LevelDefinition,
+    type LevelMaterial,
+    type LevelObjectDefinition,
+    type QuaternionTuple,
+    type Vec3Tuple,
+} from "../content/level";
 import { activeLevel, runtime } from "./state";
 import {
     addLevelObjectPhysics,
@@ -27,7 +36,14 @@ import {
     updateLevelEntity,
     type LevelEntity,
 } from "./physics";
-import { addLevelRendering } from "./level-rendering";
+import {
+    addLevelRendering,
+    cacheLevelAsset,
+    loadLevelAsset,
+    loadModelFile,
+    modelLocalHalfExtents,
+    updateLevelRendering,
+} from "./level-rendering";
 import { editorState, isEditing, type CameraSettings, type EditorDrag, type EditorState, type TransformAxis } from "./editor-state";
 import type { Vec3 } from "../vec";
 import { resetGameplayToSpawn } from "./gameplay-system";
@@ -48,12 +64,13 @@ export function moveAxisLength(screenSize: number, halfExtent: number): number {
 export function moveAxisHalfExtents(
     scale: Vec3Tuple,
     rotation: QuaternionTuple,
+    localHalfExtents: Vec3Tuple = [0.5, 0.5, 0.5],
 ): Vec3Tuple {
     const cosine = Math.abs(1 - 2 * rotation[1] * rotation[1]);
     const sine = Math.abs(2 * rotation[1] * rotation[3]);
-    const halfX = scale[0] * 0.5;
-    const halfY = scale[1] * 0.5;
-    const halfZ = scale[2] * 0.5;
+    const halfX = scale[0] * localHalfExtents[0];
+    const halfY = scale[1] * localHalfExtents[1];
+    const halfZ = scale[2] * localHalfExtents[2];
     return [
         cosine * halfX + sine * halfZ,
         halfY,
@@ -197,20 +214,25 @@ function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
 
     for (const entity of state.levelEntities) {
         if (nextById.has(entity.id)) continue;
-        if (entity.visualEid !== undefined && world.has(entity.visualEid, Outline))
-            world.remove(entity.visualEid, Outline);
+        for (const visualEid of entity.visualEids ?? []) {
+            if (world.has(visualEid, Outline)) world.remove(visualEid, Outline);
+        }
         destroyLevelEntities(world, [entity]);
     }
 
     const nextEntities = level.objects.map((object) => {
         const existing = oldById.get(object.id);
         if (existing && sameEntityKinds(existing.object, object)) {
-            if (existing.object !== object) updateLevelEntity(world, existing, object);
+            if (existing.object !== object) {
+                updateLevelEntity(world, existing, object);
+                updateLevelRendering(world, existing, object);
+            }
             return existing;
         }
         if (existing) {
-            if (existing.visualEid !== undefined && world.has(existing.visualEid, Outline))
-                world.remove(existing.visualEid, Outline);
+            for (const visualEid of existing.visualEids ?? []) {
+                if (world.has(visualEid, Outline)) world.remove(visualEid, Outline);
+            }
             destroyLevelEntities(world, [existing]);
         }
         const added = addLevelObjectPhysics(world, object);
@@ -253,25 +275,28 @@ function updateFailureMarker(world: World, failureBoundaryY: number): void {
 function removeOutline(world: World, id: string | null): void {
     if (id === null) return;
     const editor = world.resource(editorState);
-    const eid = id === "spawn"
-        ? editor.spawnMarker
-        : entityFor(world.resource(runtime).levelEntities, id)?.visualEid;
-    if (eid && world.has(eid, Outline)) world.remove(eid, Outline);
+    const eids = id === "spawn"
+        ? [editor.spawnMarker]
+        : entityFor(world.resource(runtime).levelEntities, id)?.visualEids ?? [];
+    for (const eid of eids) {
+        if (eid && world.has(eid, Outline)) world.remove(eid, Outline);
+    }
 }
 
 function updateSelectionOutline(world: World): void {
     const editor = world.resource(editorState);
     const id = editor.selectedId;
     if (id === null) return;
-    const eid = id === "spawn"
-        ? editor.spawnMarker
-        : entityFor(world.resource(runtime).levelEntities, id)?.visualEid;
-    if (!eid) return;
-    if (world.has(eid, Outline)) {
-        world.storage(Outline).color.set(eid, editor.outlineColor);
-        world.storage(Outline).width.set(eid, 5);
-        world.storage(Outline).occlude.set(eid, 1);
-    } else world.add(eid, Outline, { color: editor.outlineColor, width: 5, occlude: 1 });
+    const eids = id === "spawn"
+        ? [editor.spawnMarker]
+        : entityFor(world.resource(runtime).levelEntities, id)?.visualEids ?? [];
+    for (const eid of eids) {
+        if (world.has(eid, Outline)) {
+            world.storage(Outline).color.set(eid, editor.outlineColor);
+            world.storage(Outline).width.set(eid, 5);
+            world.storage(Outline).occlude.set(eid, 1);
+        } else world.add(eid, Outline, { color: editor.outlineColor, width: 5, occlude: 1 });
+    }
 }
 
 function moveHandlePosition(world: World): Vec3 | undefined {
@@ -315,8 +340,11 @@ function updateMoveAxisHandles(world: World, editor: EditorState): void {
     const size = Math.max(0.45, Math.min(3, (visibleHeight * 85) / canvasHeight));
     editor.moveAxisSize = size;
     const object = editor.selectedId === "spawn" ? undefined : selectedObject(world);
+    const modelHalfExtents = object?.visual.kind === "gltf"
+        ? modelLocalHalfExtents(world, object.visual.asset)
+        : undefined;
     const halfExtents = object
-        ? moveAxisHalfExtents(displayedScale(object), object.transform.rotation)
+        ? moveAxisHalfExtents(displayedScale(object), object.transform.rotation, modelHalfExtents)
         : editor.selectedId === "spawn"
           ? [0.14, 0.55, 0.14]
           : [0, 0, 0];
@@ -862,7 +890,7 @@ function addObject(
     world: World,
     role: LevelMaterial,
     duplicateId?: string,
-    modelVisual = false,
+    modelAsset?: LevelAssetId,
 ): void {
     const editor = world.resource(editorState);
     const level = activeLevel(world.resource(runtime));
@@ -900,7 +928,7 @@ function addObject(
                 visual: { kind: "box", material: "ground" },
                 collision: { kind: "box", dimensions: [1, 1, 1] },
             }
-          : role === "platform" && modelVisual
+          : role === "platform" && modelAsset
             ? {
                   id,
                   role,
@@ -909,7 +937,7 @@ function addObject(
                       rotation: [0, 0, 0, 1],
                       scale: [3, 0.4, 3],
                   },
-                  visual: { kind: "gltf", asset: "sample-platform" },
+                  visual: { kind: "gltf", asset: modelAsset },
                   collision: { kind: "box", dimensions: [1, 1, 1] },
               }
             : role === "platform"
@@ -1024,6 +1052,23 @@ async function refreshLevelIds(editor: EditorState): Promise<void> {
     }
 }
 
+async function refreshModelIds(editor: EditorState): Promise<void> {
+    try {
+        const response = await fetch("/__editor/models");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const value: unknown = await response.json();
+        if (
+            !Array.isArray(value) ||
+            !value.every((id) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id))
+        )
+            throw new Error("The model list response is invalid");
+        editor.modelIds = value;
+        editor.refreshUi = true;
+    } catch (error) {
+        setStatus(editor, `Could not read project models: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
 function confirmDiscard(editor: EditorState, level: LevelDefinition): boolean {
     return !dirty(editor, level) || window.confirm(`Discard unsaved changes to "${level.id}"?`);
 }
@@ -1117,6 +1162,68 @@ async function saveProjectLevel(world: World): Promise<void> {
         setStatus(editor, `Save failed: ${error instanceof Error ? error.message : String(error)}`);
         refreshMountedUi(world);
     }
+}
+
+async function importModelFile(world: World, file: File): Promise<void> {
+    const editor = world.resource(editorState);
+    if (!file.name.toLowerCase().endsWith(".glb")) {
+        setStatus(editor, "Choose a .glb file");
+        refreshMountedUi(world);
+        return;
+    }
+    if (file.size === 0 || file.size > 64 * 1024 * 1024) {
+        setStatus(editor, "Model file must be between 1 byte and 64 MB");
+        refreshMountedUi(world);
+        return;
+    }
+
+    setStatus(editor, `Importing ${file.name}`);
+    refreshMountedUi(world);
+    try {
+        const gltf = await loadModelFile(world, file);
+        const response = await fetch("/__editor/models", {
+            method: "POST",
+            headers: { "content-type": "application/octet-stream" },
+            body: file,
+        });
+        const result: unknown = await response.json().catch(() => undefined);
+        if (!response.ok) {
+            const message =
+                typeof result === "object" && result !== null && "error" in result &&
+                typeof result.error === "string"
+                    ? result.error
+                    : `HTTP ${response.status}`;
+            throw new Error(message);
+        }
+        const asset =
+            typeof result === "object" && result !== null && "asset" in result &&
+            typeof result.asset === "string"
+                ? result.asset
+                : undefined;
+        if (!asset || !/^[a-z0-9][a-z0-9-]*$/.test(asset))
+            throw new Error("The model import response is invalid");
+        cacheLevelAsset(world, asset, gltf);
+        addObject(world, "platform", undefined, asset);
+        await refreshModelIds(editor);
+        setStatus(editor, `Loaded ${file.name}`);
+    } catch (error) {
+        setStatus(editor, `Model import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    refreshMountedUi(world);
+}
+
+async function addProjectModel(world: World, asset: LevelAssetId): Promise<void> {
+    const editor = world.resource(editorState);
+    setStatus(editor, `Loading ${asset}`);
+    refreshMountedUi(world);
+    try {
+        await loadLevelAsset(world, asset);
+        addObject(world, "platform", undefined, asset);
+        setStatus(editor, `Loaded ${asset}`);
+    } catch (error) {
+        setStatus(editor, `Model load failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    refreshMountedUi(world);
 }
 
 function isTextEntryFocused(): boolean {
@@ -1416,6 +1523,11 @@ function refreshUi(world: World, root: HTMLElement): void {
     levelSelect.value = editor.levelIds.includes(selectedLevel) ? selectedLevel : level.id;
     root.querySelector<HTMLSelectElement>("[data-tool]")!.value = editor.transformMode;
     root.querySelector<HTMLSelectElement>("[data-axis]")!.value = editor.transformAxis;
+    const modelSelect = root.querySelector<HTMLSelectElement>("[data-model-select]")!;
+    const selectedModel = modelSelect.value;
+    modelSelect.replaceChildren(new Option("Select model", ""));
+    for (const asset of editor.modelIds) modelSelect.add(new Option(asset, asset));
+    modelSelect.value = editor.modelIds.includes(selectedModel) ? selectedModel : "";
     root.querySelector<HTMLSelectElement>("[data-snap]")!.value = String(editor.snap);
     root.querySelector<HTMLInputElement>("[data-speed]")!.value = String(editor.cameraSpeed);
     root.querySelector<HTMLInputElement>("[data-failure-boundary]")!.value = String(level.failureBoundaryY);
@@ -1426,8 +1538,9 @@ function refreshUi(world: World, root: HTMLElement): void {
     const deletable = selected !== undefined && selected.role !== "ground";
     button(root, "duplicate").disabled = !duplicateable;
     button(root, "delete").disabled = !deletable;
-    for (const action of ["create-platform", "create-model", "create-goal", "create-checkpoint"])
+    for (const action of ["create-platform", "create-model", "open-model", "refresh-models", "add-project-model", "create-goal", "create-checkpoint"])
         button(root, action).disabled = editor.mode !== "edit";
+    button(root, "add-project-model").disabled = editor.mode !== "edit" || modelSelect.value === "";
     button(root, "new").disabled = editor.mode !== "edit";
     button(root, "save").disabled = editor.mode !== "edit" || !dirty(editor, level);
     for (const control of root.querySelectorAll<HTMLInputElement | HTMLSelectElement>(".editor-content input,.editor-content select"))
@@ -1456,7 +1569,9 @@ function mountEditorUi(world: World): HTMLElement {
         </section>
         <section class="editor-section" data-panel="objects">
           <span class="editor-title">Objects</span>
-          <div class="editor-actions"><button data-action="create-platform">Add platform</button><button data-action="create-model">Add model</button><button data-action="create-goal">Add goal</button><button data-action="create-checkpoint">Add checkpoint</button></div>
+          <div class="editor-actions"><button data-action="create-platform">Add platform</button><button data-action="create-model">Add sample model</button><button data-action="open-model">Open GLB</button><button data-action="create-goal">Add goal</button><button data-action="create-checkpoint">Add checkpoint</button></div>
+          <div class="editor-row"><select aria-label="Project model" data-model-select></select><button data-action="refresh-models">Refresh</button></div>
+          <div class="editor-actions"><button data-action="add-project-model">Add selected model</button></div>
           <div class="editor-actions"><button data-action="duplicate">Duplicate</button><button data-action="delete">Delete</button></div>
           <div class="editor-actions"><button data-action="undo">Undo</button><button data-action="redo">Redo</button></div>
         </section>
@@ -1476,12 +1591,36 @@ function mountEditorUi(world: World): HTMLElement {
         root.querySelector("[data-snap]")!.append(option);
     }
     root.querySelector<HTMLSelectElement>("[data-snap]")!.value = "0.5";
+    const modelFileInput = document.createElement("input");
+    modelFileInput.type = "file";
+    modelFileInput.accept = ".glb,model/gltf-binary";
+    modelFileInput.hidden = true;
+    root.append(modelFileInput);
     button(root, "toggle").addEventListener("click", () => {
         const editor = world.resource(editorState);
         setMode(world, isEditing(editor) ? "play" : "edit");
     });
     button(root, "create-platform").addEventListener("click", () => addObject(world, "platform"));
-    button(root, "create-model").addEventListener("click", () => addObject(world, "platform", undefined, true));
+    button(root, "create-model").addEventListener("click", () =>
+        addObject(world, "platform", undefined, "sample-platform"),
+    );
+    button(root, "open-model").addEventListener("click", () => modelFileInput.click());
+    root.querySelector<HTMLSelectElement>("[data-model-select]")!.addEventListener("change", () => {
+        world.resource(editorState).refreshUi = true;
+    });
+    button(root, "refresh-models").addEventListener("click", () => {
+        const editor = world.resource(editorState);
+        void refreshModelIds(editor).then(() => refreshMountedUi(world));
+    });
+    button(root, "add-project-model").addEventListener("click", () => {
+        const asset = root.querySelector<HTMLSelectElement>("[data-model-select]")!.value;
+        if (asset) void addProjectModel(world, asset);
+    });
+    modelFileInput.addEventListener("change", () => {
+        const file = modelFileInput.files?.[0];
+        modelFileInput.value = "";
+        if (file) void importModelFile(world, file);
+    });
     button(root, "create-goal").addEventListener("click", () => addObject(world, "goal"));
     button(root, "create-checkpoint").addEventListener("click", () => addObject(world, "checkpoint"));
     button(root, "duplicate").addEventListener("click", () => duplicateSelected(world));
@@ -1599,6 +1738,7 @@ export function initializeEditor(
         if (world.has(editor.failureMarker, Outline)) world.remove(editor.failureMarker, Outline);
     });
     void refreshLevelIds(editor);
+    void refreshModelIds(editor);
     refreshUi(world, root);
     if (new URLSearchParams(window.location.search).get("editor") === "1") {
         editor.mode = "play";
