@@ -8,7 +8,7 @@ import {
     levelSurfaces,
     type LevelDefinition,
 } from "../content/level";
-import type { Sim } from "../sim";
+import { effectiveCharge, type Sim } from "../sim";
 import { normalizeVec3, type Vec3 } from "../vec";
 import { clamp01 } from "./math";
 import { activeLevel, runtime, type GameRuntime } from "./state";
@@ -35,7 +35,7 @@ export function updateVisualFeedback(
         state.lastContactId = sim.pogo.contactId;
     }
     if (sim.pogo.lastLaunchedContactId !== state.lastLaunchId) {
-        const charge = sim.pogo.chargeT / DEFAULT_TUNING.CHARGE_MAX_S;
+        const charge = effectiveCharge(sim.pogo.chargeT, sim.pogo.response);
         state.launchStretch = Math.max(0.55, charge);
         state.launchFovPulse = Math.max(state.launchFovPulse, clamp01((charge - 0.4) / 0.6));
         state.lastLaunchId = sim.pogo.lastLaunchedContactId;
@@ -184,7 +184,7 @@ export function writePose(world: World, state: GameRuntime): void {
     const { sim } = state;
     const { body, pole, pogo } = sim;
     const pose = world.storage(Transform);
-    const charge = pogo.chargeT / DEFAULT_TUNING.CHARGE_MAX_S;
+    const charge = effectiveCharge(pogo.chargeT, pogo.response);
     const compression = pogo.compressionM / DEFAULT_TUNING.MAX_COMPRESSION_M;
     const squash = 0.14 * compression + 0.16 * state.impact - 0.1 * state.launchStretch;
     const bodyWidth = 1 + squash * 0.65 + state.launchStretch * 0.14;

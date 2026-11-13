@@ -121,6 +121,7 @@ export function findPlayerContact(world: World, sweep: PlayerSweep): PlayerConta
             const b = current[index]!;
             const contact = sweepCapsule({ a: local(a.a, true), b: local(a.b, true), radius: a.radius },
                 { a: local(b.a), b: local(b.b), radius: b.radius }, half);
+            if (contact && index === 1 && sweep.supportPlatform === eid && Math.abs(contact.normal.y) < 0.5) continue;
             if (!contact || (first && contact.fraction >= first.fraction)) continue;
             // Tip landings own the top plane; volume contacts still block earlier walls and ceilings.
             if (index === 1 && contact.normal.y > 0.99999 &&

@@ -62,7 +62,7 @@ export const CAMPAIGN_STAGES: readonly CampaignStage[] = [
         id: "ice-surface",
         title: "Ice platforms",
         newMechanic: "Ice",
-        instruction: "Ice has low traction during contact. Approach with your momentum already aimed at the next platform.",
+        instruction: "Hold Space to slide. Release to jump. Holding longer does not increase jump strength.",
         mechanics: ["steering", "charge", "pole-length", "elastic-surface", "grip-surface", "directional-surface", "ice-surface"],
     },
 ];

@@ -1,0 +1,78 @@
+{
+  "id": "ice-slide-practice",
+  "spawnPosition": [0, 2, 3],
+  "failureBoundaryY": -12,
+  "objects": [
+    {
+      "id": "ground",
+      "role": "ground",
+      "transform": {
+        "position": [0, -0.5, 3],
+        "rotation": [0, 0, 0, 1],
+        "scale": [16, 1, 12]
+      },
+      "visual": { "kind": "box", "material": "ground" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] }
+    },
+    {
+      "id": "ice-runway",
+      "role": "platform",
+      "transform": {
+        "position": [12, 0.8, -7],
+        "rotation": [0, 0, 0, 1],
+        "scale": [28, 0.4, 10]
+      },
+      "visual": { "kind": "box", "material": "platform" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] },
+      "surface": { "profile": "ice" }
+    },
+    {
+      "id": "down-step-1",
+      "role": "platform",
+      "transform": {
+        "position": [31, 0.45, -7],
+        "rotation": [0, 0, 0, 1],
+        "scale": [12, 0.4, 10]
+      },
+      "visual": { "kind": "box", "material": "platform" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] },
+      "surface": { "profile": "ice" }
+    },
+    {
+      "id": "down-step-2",
+      "role": "platform",
+      "transform": {
+        "position": [43, 0.1, -7],
+        "rotation": [0, 0, 0, 1],
+        "scale": [12, 0.4, 10]
+      },
+      "visual": { "kind": "box", "material": "platform" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] },
+      "surface": { "profile": "ice" }
+    },
+    {
+      "id": "down-step-3",
+      "role": "platform",
+      "transform": {
+        "position": [55, -0.25, -7],
+        "rotation": [0, 0, 0, 1],
+        "scale": [12, 0.4, 10]
+      },
+      "visual": { "kind": "box", "material": "platform" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] },
+      "surface": { "profile": "ice" }
+    },
+    {
+      "id": "catch-platform",
+      "role": "platform",
+      "transform": {
+        "position": [69, -0.7, -7],
+        "rotation": [0, 0, 0, 1],
+        "scale": [14, 0.4, 12]
+      },
+      "visual": { "kind": "box", "material": "platform" },
+      "collision": { "kind": "box", "dimensions": [1, 1, 1] },
+      "surface": { "profile": "ice" }
+    }
+  ]
+}

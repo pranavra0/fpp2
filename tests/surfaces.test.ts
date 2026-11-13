@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { DEFAULT_TUNING as tuning } from "../src/config/gameplay";
-import { createSim, landingAlpha, NEUTRAL_CONTROLS, step, type Sim, type Controls } from "../src/sim";
+import { createSim, effectiveCharge, landingAlpha, NEUTRAL_CONTROLS, step, type Sim, type Controls } from "../src/sim";
 import { DEFAULT_SURFACE, parseAuthoredSurface, parseSurfaceSnapshot, resolveSurface, SURFACE_PROFILES, validateSurfaceResponse, type SurfaceResponse, type SurfaceSnapshot } from "../src/surfaces";
 import { parseLevelDefinition } from "../src/content/level";
 import prototype from "../public/levels/prototype.json";
@@ -202,17 +202,20 @@ test("per-platform coefficient overrides round trip, inherit omitted values and 
     expect(resolveSurface(authored)).toMatchObject({ bounceScale: 0.7, contactDrag: 2.5, minimumDwell: 0.12, restitution: 0.85 });
     expect(resolveSurface(authored).maximumVerticalSpeed).toBeUndefined();
     expect(resolveSurface(parseAuthoredSurface({ profile: "elastic" })).maximumVerticalSpeed).toBe(18);
+    expect(resolveSurface(parseAuthoredSurface({ profile: "ice" }))).toMatchObject({ holdMode: "until-release", chargeScale: 0 });
+    expect(resolveSurface(parseAuthoredSurface({ profile: "default", overrides: { holdMode: "until-release", chargeScale: 0.5 } })))
+        .toMatchObject({ holdMode: "until-release", chargeScale: 0.5 });
     expect(parseAuthoredSurface({ profile: "default", overrides: {} })).toEqual({ profile: "default" });
     const level = { ...prototype, objects: prototype.objects.map((object, index) => index === 0 ? { ...object, surface: authored } : object) };
     expect(parseLevelDefinition(JSON.parse(JSON.stringify(level)))).toEqual(level);
-    for (const overrides of [null, [], { unknown: 2 }, { bounceScale: 0 }, { bounceScale: NaN }, { contactDrag: -1 }, { restitution: 1.1 }, { momentumRetention: 1.1 }, { minimumDwell: 0.31 }, { maximumVerticalSpeed: 0 }, { impactSpeedLimit: Infinity }, { contactDrag: null }, { directionalSpeed: 2 }, { bounceScale: "1" }, { bounceScale: undefined }])
+    for (const overrides of [null, [], { unknown: 2 }, { bounceScale: 0 }, { bounceScale: NaN }, { contactDrag: -1 }, { restitution: 1.1 }, { momentumRetention: 1.1 }, { minimumDwell: 0.31 }, { maximumVerticalSpeed: 0 }, { impactSpeedLimit: Infinity }, { contactDrag: null }, { directionalSpeed: 2 }, { bounceScale: "1" }, { bounceScale: undefined }, { holdMode: "unknown" }, { holdMode: 1 }, { chargeScale: 2 }, { chargeScale: NaN }])
         expect(() => parseAuthoredSurface({ profile: "default", overrides })).toThrow();
     const directional = parseAuthoredSurface({ profile: "directional", directionXZ: [3, 4], overrides: { directionalSpeed: 6, restitution: 0.2 } });
     expect(resolveSurface(directional)).toMatchObject({ directionalSpeed: 6, directionX: 0.6, directionZ: 0.8, restitution: 0.2 });
 });
 
 
-test("ice reduces ground steering and horizontal push-off while preserving momentum and bounce height", () => {
+test("ice reduces steering and horizontal push-off while preserving momentum at uncharged launch strength", () => {
     const normal = resolveSurface(), ice = resolveSurface({ profile: "ice" });
     const controls = { ...NEUTRAL_CONTROLS, leanX: -1, leanZ: 0.5, compress: true };
     const baseline = contact(normal), sliding = contact(ice);
@@ -225,12 +228,36 @@ test("ice reduces ground steering and horizontal push-off while preserving momen
     expect(sliding.pogo.contactTip.x).toBeGreaterThan(baseline.pogo.contactTip.x + 0.7);
     depart(baseline, normal);
     depart(sliding, ice);
-    expect(sliding.body.vel.y).toBeCloseTo(baseline.body.vel.y);
+    expect(sliding.body.vel.y).toBeCloseTo(tuning.LAUNCH_SPEED_MPS);
     expect(sliding.pogo.diagnostics.powered.x).toBeCloseTo(baseline.pogo.diagnostics.powered.x * ice.traction);
     expect(sliding.pogo.diagnostics.powered.z).toBeCloseTo(baseline.pogo.diagnostics.powered.z * ice.traction);
     const neutral = depart(contact(ice), ice);
     expect(neutral.body.vel.x).toBe(10);
     expect(neutral.pogo.diagnostics.dragLoss).toBe(0);
+});
+
+test("ice remains compressed through a long hold and launch strength does not depend on hold duration", () => {
+    const ice = resolveSurface({ profile: "ice" });
+    const makeHeld = (ticks: number) => {
+        const sim = contact(ice, 1, 10);
+        const query = (sweep: Parameters<typeof landingAlpha>[0] & { supportOnly?: boolean }) => {
+            if (sweep.supportOnly) return { surfaceY: 0, response: ice };
+            return landingAlpha(sweep, 0) === undefined ? undefined : { surfaceY: 0, response: ice };
+        };
+        for (let i = 0; i < ticks; i++) step(sim, tuning, { ...NEUTRAL_CONTROLS, compress: true }, query);
+        expect(sim.pogo.state).toBe("Compression");
+        expect(effectiveCharge(sim.pogo.chargeT, sim.pogo.response)).toBe(0);
+        expect(sim.pogo.lastLaunchedContactId).toBe(-1);
+        return { sim, query };
+    };
+    const short = makeHeld(2);
+    const long = makeHeld(60 * tuning.SIM_HZ);
+    for (const value of [long.sim.body.pos.x, long.sim.body.pos.y, long.sim.pogo.contactTip.x, long.sim.pogo.chargeT])
+        expect(Number.isFinite(value)).toBe(true);
+    step(short.sim, tuning, NEUTRAL_CONTROLS, short.query);
+    step(long.sim, tuning, NEUTRAL_CONTROLS, long.query);
+    expect(short.sim.pogo.diagnostics.powered.x).toBeCloseTo(long.sim.pogo.diagnostics.powered.x);
+    expect(short.sim.pogo.diagnostics.powered.y).toBeCloseTo(long.sim.pogo.diagnostics.powered.y);
 });
 
 test("sliding off an unsupported contact falls without a launch or a pending charge release", () => {

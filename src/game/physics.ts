@@ -54,12 +54,20 @@ export const LandingSurface = component("LandingSurface", {
     traction: surfaceFloat,
     minimumDwell: surfaceFloat,
     directionalSpeed: surfaceFloat,
+    holdMode: surfaceFloat,
+    chargeScale: surfaceFloat,
     maximumVerticalSpeed: surfaceFloat,
     directionX: f32,
     directionZ: f32,
 });
 
 const PROFILE_IDS = Object.keys(SURFACE_PROFILES) as SurfaceProfile[];
+const HOLD_MODE_IDS = { bounded: 0, "until-release": 1 } as const;
+function holdModeForId(id: number): "bounded" | "until-release" {
+    if (id === 0) return "bounded";
+    if (id === 1) return "until-release";
+    throw new Error(`Invalid surface hold mode encoding: ${id}`);
+}
 export const surfaceDiagnostics: Resource<{ ids: Map<number, string>; acceptedObjectId?: string; acceptedProfile?: SurfaceProfile; ambiguousObjectIds: string[] }> = {
     create: () => ({ ids: new Map(), ambiguousObjectIds: [] }),
 };
@@ -68,7 +76,8 @@ function responseData(object: LevelObjectDefinition) {
     const authored = "surface" in object ? object.surface : undefined;
     const rotationY = 2 * Math.atan2(object.transform.rotation[1], object.transform.rotation[3]);
     const response = resolveSurface(authored, rotationY);
-    return { profile: PROFILE_IDS.indexOf(authored?.profile ?? "default"), ...response, maximumVerticalSpeed: response.maximumVerticalSpeed ?? 0 };
+    return { profile: PROFILE_IDS.indexOf(authored?.profile ?? "default"), ...response,
+        holdMode: HOLD_MODE_IDS[response.holdMode], maximumVerticalSpeed: response.maximumVerticalSpeed ?? 0 };
 }
 
 export type LevelEntity = {
@@ -226,6 +235,25 @@ function tipProxy(edgeTolerance: number, halfHeight: number): ShapeProxy {
     return { points, count: points.length, radius: 0 };
 }
 
+type Footprint = { centerX: number; centerZ: number; rotationY: number; width: number; depth: number };
+
+function supportFootprintsMeet(first: Footprint, second: Footprint, tolerance: number): boolean {
+    const axes = (footprint: Footprint) => {
+        const angle = footprint.rotationY;
+        return [{ x: Math.cos(angle), z: -Math.sin(angle) }, { x: Math.sin(angle), z: Math.cos(angle) }];
+    };
+    const firstAxes = axes(first), secondAxes = axes(second);
+    const center = { x: second.centerX - first.centerX, z: second.centerZ - first.centerZ };
+    for (const axis of [...firstAxes, ...secondAxes]) {
+        const projection = Math.abs(center.x * axis.x + center.z * axis.z);
+        const radius = (footprint: Footprint, basis: ReturnType<typeof axes>) =>
+            footprint.width / 2 * Math.abs(axis.x * basis[0]!.x + axis.z * basis[0]!.z) +
+            footprint.depth / 2 * Math.abs(axis.x * basis[1]!.x + axis.z * basis[1]!.z);
+        if (projection > radius(first, firstAxes) + radius(second, secondAxes) + tolerance) return false;
+    }
+    return true;
+}
+
 export function findLandingSurface(
     world: World,
     sweep: LandingSweep,
@@ -252,7 +280,8 @@ export function findLandingSurface(
     const poses = world.storage(PlatformPose);
     const hit = emptyQueryHit();
     for (const eid of world.query([LandingSurface, PlatformPose])) {
-        if (!poses.available.get(eid) || (sweep.supportPlatform !== undefined && sweep.supportPlatform !== eid)) continue;
+        if (!poses.available.get(eid) || (sweep.supportPlatform !== undefined &&
+            (sweep.supportHandoff ? sweep.supportPlatform === eid : sweep.supportPlatform !== eid))) continue;
         const displacement = sweep.supportOnly ? { x: 0, y: 0, z: 0 } : {
             x: poses.x.get(eid) - poses.previousX.get(eid),
             y: poses.y.get(eid) - poses.previousY.get(eid),
@@ -264,6 +293,7 @@ export function findLandingSurface(
             z: sweep.previousTip.z + displacement.z,
         }, currentTip: sweep.currentTip };
         const topY = surfaces.topY.get(eid);
+        if (sweep.supportHandoff && Math.abs(topY - sweep.previousTip.y) > tuning.LANDING_VERTICAL_TOLERANCE_M) continue;
         const alpha = landingAlpha(relativeSweep, topY, tuning);
         if (alpha === undefined) continue;
         const x = relativeSweep.previousTip.x + (relativeSweep.currentTip.x - relativeSweep.previousTip.x) * alpha;
@@ -272,6 +302,14 @@ export function findLandingSurface(
             centerX: surfaces.centerX.get(eid), centerZ: surfaces.centerZ.get(eid),
             rotationY: surfaces.rotationY.get(eid), width: surfaces.width.get(eid), depth: surfaces.depth.get(eid),
         };
+        if (sweep.supportHandoff && sweep.supportPlatform !== undefined) {
+            const previous = {
+                centerX: surfaces.centerX.get(sweep.supportPlatform), centerZ: surfaces.centerZ.get(sweep.supportPlatform),
+                rotationY: surfaces.rotationY.get(sweep.supportPlatform), width: surfaces.width.get(sweep.supportPlatform), depth: surfaces.depth.get(sweep.supportPlatform),
+            };
+            const tolerance = Math.max(surfaces.edgeTolerance.get(eid), surfaces.edgeTolerance.get(sweep.supportPlatform));
+            if (!supportFootprintsMeet(previous, surface, tolerance)) continue;
+        }
         if (!levelSurfaceContains(surface, x, z, surfaces.edgeTolerance.get(eid))) continue;
         const rotation = world.storage(Transform).rotation;
         if (!sweep.supportOnly && !castBodyShape(world, eid, relativeSweep.previousTip, proxy, {
@@ -313,8 +351,11 @@ export function findLandingSurface(
             traction: surfaces.traction.get(selected.eid),
             minimumDwell: surfaces.minimumDwell.get(selected.eid),
             directionalSpeed: surfaces.directionalSpeed.get(selected.eid),
+            holdMode: holdModeForId(surfaces.holdMode.get(selected.eid)),
+            chargeScale: surfaces.chargeScale.get(selected.eid),
             ...(surfaces.maximumVerticalSpeed.get(selected.eid) > 0 ? { maximumVerticalSpeed: surfaces.maximumVerticalSpeed.get(selected.eid) } : {}),
-            directionX: surfaces.directionX.get(selected.eid), directionZ: surfaces.directionZ.get(selected.eid) } };
+            directionX: surfaces.directionX.get(selected.eid), directionZ: surfaces.directionZ.get(selected.eid) },
+            ...(sweep.supportHandoff ? { supportHandoff: true } : {}) };
     }
     diagnostics.acceptedObjectId = bestId;
     diagnostics.acceptedProfile = bestProfile;

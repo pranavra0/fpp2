@@ -56,10 +56,11 @@ export type LandingSweep = {
     currentTip: Vec3;
     supportPlatform?: number;
     supportOnly?: boolean;
+    supportHandoff?: boolean;
 };
 
 export type PlayerPose = { position: Vec3; tip: Vec3 };
-export type PlayerSweep = { previous: PlayerPose; current: PlayerPose; startFraction?: number };
+export type PlayerSweep = { previous: PlayerPose; current: PlayerPose; startFraction?: number; supportPlatform?: number };
 export type PlayerContact = { fraction: number; normal: Vec3; displacement?: Vec3; velocity?: Vec3 };
 export type PlayerQuery = (sweep: PlayerSweep) => PlayerContact | undefined;
 
@@ -82,6 +83,7 @@ export type LandingContact = {
     point?: Vec3;
     platformPosition?: Vec3;
     platformVelocity?: Vec3;
+    supportHandoff?: boolean;
 };
 
 export type LandingQuery = (sweep: LandingSweep) => LandingContact | undefined;
@@ -230,10 +232,21 @@ function land(sim: Sim, topY: number, tipX: number, tipZ: number, response: Surf
     body.vel.z += velocity.z;
 }
 
+export function effectiveCharge(chargeT: number, response: SurfaceSnapshot, tuning: Tuning = DEFAULT_TUNING): number {
+    assert(Number.isFinite(tuning.CHARGE_MAX_S) && tuning.CHARGE_MAX_S > 0, "invalid charge capacity");
+    assert(Number.isFinite(chargeT) && chargeT >= 0 && chargeT <= tuning.CHARGE_MAX_S, "invalid charge timer");
+    return (chargeT / tuning.CHARGE_MAX_S) * response.chargeScale;
+}
+
+function sameSurfaceResponse(a: SurfaceSnapshot, b: SurfaceSnapshot): boolean {
+    const fields = ["bounceScale", "restitution", "impactSpeedLimit", "momentumRetention", "contactDrag", "traction", "minimumDwell", "directionalSpeed", "holdMode", "chargeScale", "maximumVerticalSpeed", "directionX", "directionZ"] as const;
+    return fields.every((field) => a[field] === b[field]);
+}
+
 function launch(sim: Sim, tuning: Tuning): void {
     const { body, pole, pogo } = sim;
     assert(pogo.contactId !== pogo.lastLaunchedContactId, "a pogo contact launched twice");
-    const charge = pogo.chargeT / tuning.CHARGE_MAX_S;
+    const charge = effectiveCharge(pogo.chargeT, pogo.response, tuning);
     const speed = tuning.LAUNCH_SPEED_MPS + tuning.CHARGE_BONUS_MPS * charge;
     const baseVerticalSpeed = Math.max(
         tuning.MIN_LAUNCH_VERTICAL_MPS,
@@ -314,7 +327,7 @@ function updateCompression(sim: Sim, tuning: Tuning, controls: Controls, dt: num
     if (controls.compress || pogo.jumpBufferT > 0) {
         pogo.chargeT = Math.min(tuning.CHARGE_MAX_S, pogo.chargeT + dt);
     }
-    const charge = pogo.chargeT / tuning.CHARGE_MAX_S;
+    const charge = effectiveCharge(pogo.chargeT, pogo.response, tuning);
     pogo.compressionM =
         tuning.MIN_COMPRESSION_M +
         (tuning.MAX_COMPRESSION_M - tuning.MIN_COMPRESSION_M) * charge;
@@ -327,7 +340,7 @@ function updateCompression(sim: Sim, tuning: Tuning, controls: Controls, dt: num
     );
 
     if (pogo.pendingLaunch === undefined) {
-        if (pogo.chargeT >= tuning.CHARGE_MAX_S) pogo.pendingLaunch = "full-charge";
+        if (pogo.response.holdMode === "bounded" && pogo.chargeT >= tuning.CHARGE_MAX_S) pogo.pendingLaunch = "full-charge";
         else if (!controls.compress && pogo.jumpBufferT <= 0) {
             if (pogo.chargeT > 0) pogo.pendingLaunch = "release";
             else if (pogo.compressT >= tuning.AUTO_BOUNCE_DELAY_S) pogo.pendingLaunch = "automatic";
@@ -366,6 +379,8 @@ function integrateStep(
         limitHorizontalSpeed(body.vel, tuning);
         pogo.carryVelX = body.vel.x;
         pogo.carryVelZ = body.vel.z;
+        const supportedStart = { ...pogo.contactTip };
+        const oldSupport = pogo.support;
         if (pogo.response.traction < 1) {
             const slip = (1 - pogo.response.traction) * dt;
             pogo.contactTip.x += pogo.carryVelX * slip;
@@ -373,17 +388,59 @@ function integrateStep(
         }
         const tip = pogo.contactTip;
         const tolerance = tuning.LANDING_VERTICAL_TOLERANCE_M;
-        const support = findLanding({
+        const currentSupport = findLanding({
             previousTip: { x: tip.x, y: tip.y + tolerance, z: tip.z },
             currentTip: { x: tip.x, y: tip.y - tolerance, z: tip.z },
             supportOnly: true,
             ...(pogo.support ? { supportPlatform: pogo.support.platformId } : {}),
         });
+        let support = currentSupport && Math.abs(currentSupport.surfaceY - tip.y) <= tolerance ? currentSupport : undefined;
+        if (!support && oldSupport) {
+            support = findLanding({
+                previousTip: { x: supportedStart.x, y: supportedStart.y + tolerance, z: supportedStart.z },
+                currentTip: { x: tip.x, y: tip.y - tolerance, z: tip.z },
+                supportOnly: true,
+                supportHandoff: true,
+                supportPlatform: oldSupport.platformId,
+            });
+        }
         if (!support || Math.abs(support.surfaceY - tip.y) > tolerance) {
+            const canReleaseAtStart = oldSupport !== undefined && !controls.compress && pogo.jumpBufferT <= 0 && pogo.chargeT > 0;
+            if (canReleaseAtStart) {
+                const startSupport = findLanding({
+                    previousTip: { x: supportedStart.x, y: supportedStart.y + tolerance, z: supportedStart.z },
+                    currentTip: { x: supportedStart.x, y: supportedStart.y - tolerance, z: supportedStart.z },
+                    supportOnly: true,
+                    supportPlatform: oldSupport.platformId,
+                });
+                if (startSupport && Math.abs(startSupport.surfaceY - supportedStart.y) <= tolerance) {
+                    setVec3(pogo.contactTip, supportedStart.x, supportedStart.y, supportedStart.z);
+                    updateCompression(sim, tuning, controls, dt);
+                    return;
+                }
+            }
             releaseSupport(sim);
             return;
         }
-        if (pogo.support) {
+        if (support.supportHandoff && oldSupport && support.platformId !== undefined && support.platformPosition) {
+            const worldVelocity = { x: pogo.carryVelX + oldSupport.velocity.x, y: oldSupport.velocity.y, z: pogo.carryVelZ + oldSupport.velocity.z };
+            const nextVelocity = support.platformVelocity ?? { x: 0, y: 0, z: 0 };
+            pogo.carryVelX = worldVelocity.x - nextVelocity.x;
+            pogo.carryVelZ = worldVelocity.z - nextVelocity.z;
+            const nextResponse = parseSurfaceSnapshot(support.response ?? resolveSurface());
+            if (!sameSurfaceResponse(nextResponse, pogo.response)) {
+                pogo.chargeT = 0;
+                pogo.compressT = 0;
+                pogo.pendingLaunch = undefined;
+            }
+            pogo.response = nextResponse;
+            pogo.support = {
+                platformId: support.platformId,
+                position: { ...support.platformPosition },
+                velocity: { ...nextVelocity },
+                anchor: { x: tip.x - support.platformPosition.x, y: support.surfaceY - support.platformPosition.y, z: tip.z - support.platformPosition.z },
+            };
+        } else if (pogo.support) {
             pogo.support.anchor.x = tip.x - pogo.support.position.x;
             pogo.support.anchor.z = tip.z - pogo.support.position.z;
         }
@@ -393,7 +450,7 @@ function integrateStep(
             body.vel.z += pogo.support.velocity.z;
         }
         updateCompression(sim, tuning, controls, dt);
-        return;
+        return support.supportHandoff ? support : undefined;
     }
 
     // Collision interpolation needs the tip pose from before control and movement.
@@ -453,9 +510,13 @@ function removeInwardMotion(vector: Vec3, normal: Vec3): void {
 }
 
 function releaseSupport(sim: Sim): void {
-    const { pogo, body } = sim;
+    const { pogo, body, pole } = sim;
     const velocity = pogo.support?.velocity ?? { x: 0, y: 0, z: 0 };
     setVec3(body.vel, pogo.carryVelX + velocity.x, velocity.y, pogo.carryVelZ + velocity.z);
+    setVec3(body.pos,
+        pogo.contactTip.x + pole.d.x * pole.length,
+        pogo.contactTip.y + pole.d.y * pole.length,
+        pogo.contactTip.z + pole.d.z * pole.length);
     pogo.state = "Airborne";
     pogo.compressionM = 0;
     pogo.pendingLaunch = undefined;
@@ -497,10 +558,11 @@ export function step(
     let blocked = false;
     let startFraction = 0;
     for (let iteration = 0; iteration < 6; iteration++) {
-        const contact = findContact({ previous: start, current: target, startFraction });
+        const contact = findContact({ previous: start, current: target, startFraction,
+            ...(previousPogo.state === "Compression" && previousPogo.support ? { supportPlatform: previousPogo.support.platformId } : {}) });
         if (!contact) {
             Object.assign(sim.body.pos, target.position);
-            return sim.pogo.contactId !== previousPogo.contactId ? accepted : undefined;
+            return sim.pogo.contactId !== previousPogo.contactId || accepted?.supportHandoff ? accepted : undefined;
         }
         assert(contact.fraction >= 0 && contact.fraction <= 1, "invalid player contact fraction");
         assert(Math.abs(Math.hypot(contact.normal.x, contact.normal.y, contact.normal.z) - 1) < 1e-5, "invalid player contact normal");
@@ -527,18 +589,39 @@ export function step(
         }
         if (!blocked) {
             // Reject a later tip landing when a wall or ceiling was reached first.
-            if (sim.pogo.contactId !== previousPogo.contactId) Object.assign(sim.pogo, previousPogo);
+            if (sim.pogo.contactId !== previousPogo.contactId || accepted?.supportHandoff) Object.assign(sim.pogo, previousPogo);
             const direction = { x: position.x - tip.x, y: position.y - tip.y, z: position.z - tip.z };
-            const supported = sim.pogo.state === "Compression" &&
-                Math.hypot(tip.x - sim.pogo.contactTip.x, tip.y - sim.pogo.contactTip.y, tip.z - sim.pogo.contactTip.z) < 1e-5;
-            sim.pole.length = Math.hypot(direction.x, direction.y, direction.z) + (supported ? sim.pogo.compressionM : 0);
+            const wasSupported = sim.pogo.state === "Compression" && sim.pogo.support !== undefined;
+            sim.pole.length = Math.hypot(direction.x, direction.y, direction.z) + (wasSupported ? sim.pogo.compressionM : 0);
             normalizeVec3(direction);
             Object.assign(sim.pole.d, direction);
             sim.pole.leanZ = Math.asin(direction.z);
             sim.pole.leanX = Math.atan2(direction.x, direction.y);
             sim.pole.leanVelX = 0;
             sim.pole.leanVelZ = 0;
+            Object.assign(sim.body.pos, position);
+            let supported = false;
+            if (wasSupported && sim.pogo.support) {
+                const constrainedTip = playerPose(sim).tip;
+                const tolerance = tuning.LANDING_VERTICAL_TOLERANCE_M;
+                const supportAtCollision = findLanding({
+                    previousTip: { x: constrainedTip.x, y: constrainedTip.y + tolerance, z: constrainedTip.z },
+                    currentTip: { x: constrainedTip.x, y: constrainedTip.y - tolerance, z: constrainedTip.z },
+                    supportOnly: true,
+                    supportPlatform: sim.pogo.support.platformId,
+                });
+                if (supportAtCollision && Math.abs(supportAtCollision.surfaceY - constrainedTip.y) <= tolerance) {
+                    supported = true;
+                    Object.assign(sim.pogo.contactTip, constrainedTip);
+                    sim.pogo.support.anchor.x = constrainedTip.x - sim.pogo.support.position.x;
+                    sim.pogo.support.anchor.y = supportAtCollision.surfaceY - sim.pogo.support.position.y;
+                    sim.pogo.support.anchor.z = constrainedTip.z - sim.pogo.support.position.z;
+                    sim.pogo.carryVelX = sim.body.vel.x - sim.pogo.support.velocity.x;
+                    sim.pogo.carryVelZ = sim.body.vel.z - sim.pogo.support.velocity.z;
+                }
+            }
             if (!supported) {
+                if (wasSupported) sim.pole.length -= sim.pogo.compressionM;
                 sim.pogo.state = "Airborne";
                 sim.pogo.compressionM = 0;
                 sim.pogo.pendingLaunch = undefined;

@@ -44,6 +44,26 @@ test("body slides along solid walls without losing tangential velocity", async (
     });
 });
 
+test("holding compression slides the rod off the supporting platform edge", async () => {
+    const ice = { ...box("ice", [0, -0.2, 0], [4, 0.4, 4]), surface: { profile: "ice" as const } };
+    await scene([ice], tick => {
+        const sim = createSim({ x: 0, y: 1.001, z: 0 });
+        sim.body.vel = { x: 10, y: -1, z: 0 };
+        tick(sim, { ...NEUTRAL_CONTROLS, compress: true });
+        expect(sim.pogo.state).toBe("Compression");
+        for (let i = 0; i < 120 && sim.pogo.state === "Compression"; i++)
+            tick(sim, { ...NEUTRAL_CONTROLS, compress: true });
+        expect(sim.pogo.state).toBe("Airborne");
+        expect(sim.body.vel.x).toBeGreaterThan(0);
+        expect(sim.pogo.lastLaunchedContactId).toBe(-1);
+        const contactId = sim.pogo.contactId;
+        const departureX = sim.body.pos.x;
+        for (let i = 0; i < 30; i++) tick(sim, { ...NEUTRAL_CONTROLS, compress: true });
+        expect(sim.body.pos.x).toBeGreaterThan(departureX);
+        expect(sim.pogo.contactId).toBe(contactId);
+    });
+});
+
 test("extended and leaning rods collide along their length", async () => {
     await scene([box("wall", [-0.7, 1, 0], [0.1, 1, 8])], tick => {
         const sim = createSim({ x: 0, y: 3, z: 0 });

@@ -1609,7 +1609,13 @@ function renderProperties(world: World, root: HTMLElement): void {
         const authored = object.surface ?? { profile: "default" as const };
         const response = resolveSurface(authored);
         const preset: SurfaceResponse = SURFACE_PROFILES[authored.profile];
-        const coefficientFields: { key: keyof SurfaceResponse; label: string; maximum?: number }[] = [
+        const coefficientFields: {
+            key: "bounceScale" | "restitution" | "impactSpeedLimit" | "momentumRetention" |
+                "traction" | "contactDrag" | "minimumDwell" | "directionalSpeed" |
+                "maximumVerticalSpeed" | "chargeScale";
+            label: string;
+            maximum?: number;
+        }[] = [
             { key: "bounceScale", label: "Bounce strength (multiplier)" },
             { key: "restitution", label: "Impact rebound (0–1)", maximum: 1 },
             { key: "impactSpeedLimit", label: "Impact speed limit (m/s)" },
@@ -1619,7 +1625,21 @@ function renderProperties(world: World, root: HTMLElement): void {
             { key: "minimumDwell", label: "Minimum contact time (s)", maximum: 0.3 },
             ...(authored.profile === "directional" ? [{ key: "directionalSpeed" as const, label: "Directional speed (m/s)" }] : []),
             { key: "maximumVerticalSpeed", label: "Vertical speed limit (m/s, blank for none)" },
+            { key: "chargeScale", label: "Charge multiplier (0–1)", maximum: 1 },
         ];
+        const holdLabel = document.createElement("label");
+        holdLabel.textContent = "Hold mode";
+        const holdSelect = document.createElement("select");
+        for (const mode of ["bounded", "until-release"] as const) holdSelect.add(new Option(mode, mode));
+        holdSelect.value = response.holdMode;
+        holdSelect.addEventListener("change", () => {
+            const overrides: SurfaceOverrides = { ...authored.overrides };
+            if (holdSelect.value === preset.holdMode) delete overrides.holdMode;
+            else overrides.holdMode = holdSelect.value as "bounded" | "until-release";
+            setSurfaceProperty(world, { ...authored, overrides });
+        });
+        holdLabel.append(holdSelect);
+        panel.append(holdLabel);
         for (const { key, label, maximum } of coefficientFields) {
             const field = document.createElement("label");
             field.textContent = label;
