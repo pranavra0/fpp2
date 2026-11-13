@@ -1,0 +1,295 @@
+{
+  "id": "moving-platforms",
+  "spawnPosition": [
+    0,
+    2,
+    0
+  ],
+  "failureBoundaryY": -8,
+  "objects": [
+    {
+      "id": "ground",
+      "role": "ground",
+      "transform": {
+        "position": [
+          0,
+          -0.5,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          12,
+          1,
+          12
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "ground"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "platform-1",
+      "role": "platform",
+      "transform": {
+        "position": [
+          0,
+          0.5,
+          -4
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          6,
+          0.4,
+          6
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "motion": {
+        "path": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            2,
+            0,
+            0
+          ]
+        ],
+        "duration": 5,
+        "phase": 0,
+        "mode": "ping-pong"
+      }
+    },
+    {
+      "id": "platform-2",
+      "role": "platform",
+      "transform": {
+        "position": [
+          3,
+          1.1,
+          -8
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          6,
+          0.4,
+          6
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "checkpoint-1",
+      "role": "checkpoint",
+      "transform": {
+        "position": [
+          3,
+          2.45,
+          -8
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1.4,
+          2.1,
+          1.4
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "checkpoint"
+      },
+      "collision": {
+        "kind": "trigger-box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "platform-3",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -3,
+          1.7,
+          -12
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          6,
+          0.4,
+          6
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "motion": {
+        "path": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            1.5,
+            0
+          ]
+        ],
+        "duration": 4,
+        "phase": 0,
+        "mode": "ping-pong"
+      }
+    },
+    {
+      "id": "platform-finish",
+      "role": "platform",
+      "transform": {
+        "position": [
+          0,
+          2.4,
+          -16
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          7,
+          0.4,
+          7
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "goal",
+      "role": "goal",
+      "transform": {
+        "position": [
+          0,
+          4.05,
+          -16
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          2.4,
+          2.4,
+          2.4
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "goal"
+      },
+      "collision": {
+        "kind": "trigger-box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "start",
+      "checkpointId": null,
+      "instruction": "Land on the horizontally moving platform. Its velocity carries into your launch."
+    },
+    {
+      "id": "finish",
+      "checkpointId": "checkpoint-1",
+      "instruction": "Use the lift, then steer toward the stationary finish platform."
+    }
+  ]
+}

@@ -118,7 +118,7 @@ test("checkpoint overlap transitions activate once per entry and ignore spawn ov
         advanceGameplay(level, progress, checkpointCenter, [
             { contacts: [{ id: checkpoint.id, fraction: 0.5 }], insideTriggerIds: [checkpoint.id] },
         ]),
-    ).toBe("checkpoint");
+    ).toBeNull();
 
     const goalCenter = goal.transform.position;
     progress.insideTriggerIds = new Set([goal.id]);

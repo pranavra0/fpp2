@@ -1,3 +1,7 @@
+import { saveLevelFile } from "./editor-persistence";
+import { mountSectionProperties, mountSlopeProperty } from "./editor-properties";
+import { moveAxisLength, moveAxisHalfExtents, axisVector, axisRotation, arrowMeshData, closestRayAxis, raySphereDistance, rayTriggerDistance, intersectPlane, snapValue, constrained } from "./editor-picking";
+import { cloneLevel, sameLevel, dirty, saveHistory } from "./editor-edits";
 import { resetPlatforms } from "./platforms";
 import { parseAuthoredSurface, resolveSurface, SURFACE_PROFILES, type SurfaceOverrides, type SurfaceResponse } from "../surfaces";
 import {
@@ -52,7 +56,6 @@ import { editorState, isEditing, type CameraSettings, type EditorDrag, type Edit
 import type { Vec3 } from "../vec";
 import { resetGameplayToSpawn } from "./gameplay-system";
 
-const HISTORY_LIMIT = 50;
 const DRAG_DISTANCE = 100;
 const MIN_OBJECT_SIZE = 0.1;
 const SNAP_STEPS = [0, 0.25, 0.5, 1] as const;
@@ -62,87 +65,8 @@ const HIT = emptyQueryHit();
 type Axis = Exclude<TransformAxis, "free">;
 
 /** Keep a move-axis handle large enough to select and outside the object's projected extent. */
-export function moveAxisLength(screenSize: number, halfExtent: number): number {
-    return Math.max(screenSize, halfExtent + screenSize * 0.4);
-}
 
 /** Compute the world-aligned half extents of a Y-rotated object. */
-export function moveAxisHalfExtents(
-    scale: Vec3Tuple,
-    rotation: QuaternionTuple,
-    localHalfExtents: Vec3Tuple = [0.5, 0.5, 0.5],
-): Vec3Tuple {
-    const cosine = Math.abs(1 - 2 * rotation[1] * rotation[1]);
-    const sine = Math.abs(2 * rotation[1] * rotation[3]);
-    const halfX = scale[0] * localHalfExtents[0];
-    const halfY = scale[1] * localHalfExtents[1];
-    const halfZ = scale[2] * localHalfExtents[2];
-    return [
-        cosine * halfX + sine * halfZ,
-        halfY,
-        sine * halfX + cosine * halfZ,
-    ];
-}
-
-function axisVector(axis: Axis): Vec3 {
-    if (axis === "x") return { x: 1, y: 0, z: 0 };
-    if (axis === "y") return { x: 0, y: 1, z: 0 };
-    return { x: 0, y: 0, z: 1 };
-}
-
-function axisRotation(axis: Axis): readonly [number, number, number, number] {
-    const half = Math.SQRT1_2;
-    if (axis === "x") return [0, 0, -half, half];
-    if (axis === "z") return [half, 0, 0, half];
-    return [0, 0, 0, 1];
-}
-
-function arrowMeshData(): { vertices: Float32Array; indices: Uint32Array } {
-    const vertices: number[] = [];
-    const indices: number[] = [];
-    const tip: Vec3 = { x: 0, y: 0.5, z: 0 };
-    const center: Vec3 = { x: 0, y: -0.5, z: 0 };
-    const base = Array.from({ length: 6 }, (_, index): Vec3 => {
-        const angle = (index * Math.PI * 2) / 6;
-        return { x: Math.cos(angle) * 0.5, y: -0.5, z: Math.sin(angle) * 0.5 };
-    });
-
-    function triangle(a: Vec3, b: Vec3, c: Vec3): void {
-        const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
-        const ac = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
-        const normal = {
-            x: ab.y * ac.z - ab.z * ac.y,
-            y: ab.z * ac.x - ab.x * ac.z,
-            z: ab.x * ac.y - ab.y * ac.x,
-        };
-        const length = Math.hypot(normal.x, normal.y, normal.z);
-        const offset = vertices.length / 8;
-        for (const point of [a, b, c])
-            vertices.push(
-                point.x,
-                point.y,
-                point.z,
-                0,
-                normal.x / length,
-                normal.y / length,
-                normal.z / length,
-                0,
-            );
-        indices.push(offset, offset + 1, offset + 2);
-    }
-
-    for (let index = 0; index < base.length; index++) {
-        const current = base[index]!;
-        const next = base[(index + 1) % base.length]!;
-        triangle(current, tip, next);
-        triangle(center, current, next);
-    }
-    return { vertices: new Float32Array(vertices), indices: new Uint32Array(indices) };
-}
-
-function cloneLevel(level: LevelDefinition): LevelDefinition {
-    return structuredClone(level);
-}
 
 function point(position: Vec3Tuple): Vec3 {
     return { x: position[0], y: position[1], z: position[2] };
@@ -164,14 +88,6 @@ function authoredScale(object: LevelObjectDefinition, displayed: Vec3Tuple): Vec
         displayed[1] / object.collision.dimensions[1],
         displayed[2] / object.collision.dimensions[2],
     ];
-}
-
-function sameLevel(a: LevelDefinition, b: LevelDefinition): boolean {
-    return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function dirty(editor: EditorState, level: LevelDefinition): boolean {
-    return editor.saved === undefined || !sameLevel(editor.saved, level);
 }
 
 function setStatus(editor: EditorState, message: string): void {
@@ -206,13 +122,8 @@ function selectedObject(world: World): LevelObjectDefinition | undefined {
     return id === null || id === "spawn" ? undefined : objectFor(activeLevel(world.resource(runtime)), id);
 }
 
-function saveHistory(editor: EditorState, level: LevelDefinition): void {
-    editor.undo.push(cloneLevel(level));
-    if (editor.undo.length > HISTORY_LIMIT) editor.undo.shift();
-    editor.redo.length = 0;
-}
-
 function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
+    parseLevelDefinition(level);
     const state = world.resource(runtime);
     const editor = world.resource(editorState);
     const nextById = new Map(level.objects.map((object) => [object.id, object]));
@@ -389,38 +300,6 @@ function updateMoveAxisHandles(world: World, editor: EditorState): void {
     }
 }
 
-function closestRayAxis(
-    ray: { origin: readonly [number, number, number]; dir: readonly [number, number, number] },
-    origin: Vec3,
-    axis: Vec3,
-): { axisParameter: number; distance: number } | undefined {
-    const dx = ray.dir[0];
-    const dy = ray.dir[1];
-    const dz = ray.dir[2];
-    const wx = ray.origin[0] - origin.x;
-    const wy = ray.origin[1] - origin.y;
-    const wz = ray.origin[2] - origin.z;
-    const directionDotAxis = dx * axis.x + dy * axis.y + dz * axis.z;
-    const directionDotOffset = dx * wx + dy * wy + dz * wz;
-    const axisDotOffset = axis.x * wx + axis.y * wy + axis.z * wz;
-    const denominator = dx * dx + dy * dy + dz * dz - directionDotAxis * directionDotAxis;
-    if (denominator < 1e-6) return undefined;
-    const rayParameter =
-        (directionDotAxis * axisDotOffset - directionDotOffset) / denominator;
-    if (rayParameter < 0) return undefined;
-    const axisParameter = axisDotOffset + directionDotAxis * rayParameter;
-    const rayX = ray.origin[0] + dx * rayParameter;
-    const rayY = ray.origin[1] + dy * rayParameter;
-    const rayZ = ray.origin[2] + dz * rayParameter;
-    const axisX = origin.x + axis.x * axisParameter;
-    const axisY = origin.y + axis.y * axisParameter;
-    const axisZ = origin.z + axis.z * axisParameter;
-    return {
-        axisParameter,
-        distance: Math.hypot(rayX - axisX, rayY - axisY, rayZ - axisZ),
-    };
-}
-
 function pickMoveAxisHandle(world: World, x: number, y: number): Axis | undefined {
     const editor = world.resource(editorState);
     const pivot = moveHandlePosition(world);
@@ -525,6 +404,7 @@ function setObject(world: World, id: string, object: LevelObjectDefinition): voi
 }
 
 function changedLevel(world: World, next: LevelDefinition, before: LevelDefinition): void {
+    parseLevelDefinition(next);
     if (sameLevel(before, next)) return;
     const editor = world.resource(editorState);
     saveHistory(editor, before);
@@ -568,66 +448,6 @@ function rayAt(world: World, x: number, y: number) {
     return viewportToWorld(world, editor.camera, x, y);
 }
 
-function raySphereDistance(
-    origin: readonly [number, number, number],
-    direction: readonly [number, number, number],
-    center: Vec3,
-    radius: number,
-): number | undefined {
-    const ox = origin[0] - center.x;
-    const oy = origin[1] - center.y;
-    const oz = origin[2] - center.z;
-    const projection = ox * direction[0] + oy * direction[1] + oz * direction[2];
-    const discriminant = projection * projection - (ox * ox + oy * oy + oz * oz - radius * radius);
-    if (discriminant < 0) return undefined;
-    const near = -projection - Math.sqrt(discriminant);
-    const far = -projection + Math.sqrt(discriminant);
-    if (near >= 0) return near;
-    return far >= 0 ? far : undefined;
-}
-
-function rayTriggerDistance(
-    origin: readonly [number, number, number],
-    direction: readonly [number, number, number],
-    object: LevelObjectDefinition,
-): number | undefined {
-    if (object.collision.kind !== "trigger-box") return undefined;
-    const rotationY = 2 * Math.atan2(object.transform.rotation[1], object.transform.rotation[3]);
-    const cosine = Math.cos(rotationY);
-    const sine = Math.sin(rotationY);
-    const dx = origin[0] - object.transform.position[0];
-    const dz = origin[2] - object.transform.position[2];
-    const localOrigin = [
-        cosine * dx - sine * dz,
-        origin[1] - object.transform.position[1],
-        sine * dx + cosine * dz,
-    ];
-    const localDirection = [
-        cosine * direction[0] - sine * direction[2],
-        direction[1],
-        sine * direction[0] + cosine * direction[2],
-    ];
-    const half = object.transform.scale.map(
-        (scale, axis) => scale * object.collision.dimensions[axis]! * 0.5,
-    );
-    let enter = 0;
-    let exit = DRAG_DISTANCE;
-    for (let axis = 0; axis < 3; axis++) {
-        const delta = localDirection[axis]!;
-        if (Math.abs(delta) < 1e-8) {
-            if (localOrigin[axis]! < -half[axis]! || localOrigin[axis]! > half[axis]!)
-                return undefined;
-            continue;
-        }
-        const first = (-half[axis]! - localOrigin[axis]!) / delta;
-        const second = (half[axis]! - localOrigin[axis]!) / delta;
-        enter = Math.max(enter, Math.min(first, second));
-        exit = Math.min(exit, Math.max(first, second));
-        if (enter > exit) return undefined;
-    }
-    return exit >= 0 && enter <= DRAG_DISTANCE ? Math.max(0, enter) : undefined;
-}
-
 function pick(world: World, x: number, y: number): string | null {
     const editor = world.resource(editorState);
     const game = world.resource(runtime);
@@ -668,37 +488,6 @@ function pick(world: World, x: number, y: number): string | null {
         }
     }
     return selectedId;
-}
-
-function intersectPlane(
-    ray: { origin: readonly [number, number, number]; dir: readonly [number, number, number] },
-    position: Vec3,
-    normal: Vec3,
-): Vec3 | undefined {
-    const denominator = ray.dir[0] * normal.x + ray.dir[1] * normal.y + ray.dir[2] * normal.z;
-    if (Math.abs(denominator) < 1e-5) return undefined;
-    const distance = (
-        (position.x - ray.origin[0]) * normal.x +
-        (position.y - ray.origin[1]) * normal.y +
-        (position.z - ray.origin[2]) * normal.z
-    ) / denominator;
-    if (distance < 0) return undefined;
-    return {
-        x: ray.origin[0] + ray.dir[0] * distance,
-        y: ray.origin[1] + ray.dir[1] * distance,
-        z: ray.origin[2] + ray.dir[2] * distance,
-    };
-}
-
-function snapValue(value: number, step: number): number {
-    return step > 0 ? Math.round(value / step) * step : value;
-}
-
-function constrained(delta: Vec3, axis: TransformAxis): Vec3 {
-    if (axis === "x") return { x: delta.x, y: 0, z: 0 };
-    if (axis === "y") return { x: 0, y: delta.y, z: 0 };
-    if (axis === "z") return { x: 0, y: 0, z: delta.z };
-    return delta;
 }
 
 function beginDrag(world: World, id: string, x: number, y: number): void {
@@ -1005,7 +794,7 @@ function deleteSelected(world: World): void {
     const object = editor.selectedId ? objectFor(level, editor.selectedId) : undefined;
     if (!object || object.role === "ground") return;
     const before = cloneLevel(level);
-    const next = { ...level, objects: level.objects.filter((entry) => entry.id !== object.id) };
+    const next = { ...level, objects: level.objects.filter((entry) => entry.id !== object.id), ...(level.sections ? { sections: level.sections.filter(section => section.checkpointId !== object.id) } : {}) };
     removeOutline(world, editor.selectedId);
     editor.selectedId = null;
     changedLevel(world, next, before);
@@ -1151,16 +940,7 @@ async function saveProjectLevel(world: World): Promise<void> {
     const exists = editor.levelIds.includes(level.id);
     if (exists && !window.confirm(`Overwrite public/levels/${level.id}.json?`)) return;
     try {
-        const response = await fetch(`/__editor/levels/${encodeURIComponent(level.id)}`, {
-            method: "PUT",
-            headers: {
-                "content-type": "application/json",
-                "x-level-operation": exists ? "overwrite" : "create",
-            },
-            body: JSON.stringify(level, null, 2),
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : `HTTP ${response.status}`);
+        await saveLevelFile(level, exists);
         editor.saved = cloneLevel(level);
         if (!editor.levelIds.includes(level.id)) editor.levelIds.push(level.id);
         setStatus(editor, "");
@@ -1574,6 +1354,12 @@ function renderProperties(world: World, root: HTMLElement): void {
     panel.append(heading);
     if (object.role === "platform") {
         platformBehaviorFields(world, panel, object);
+        mountSlopeProperty(panel, object, collision => {
+            const level = activeLevel(world.resource(runtime));
+            try { changedLevel(world, { ...level, objects: level.objects.map(entry => entry.id === object.id ? { ...object, collision } : entry) }, cloneLevel(level)); }
+            catch (error) { setStatus(editor, error instanceof Error ? error.message : String(error)); }
+            refreshMountedUi(world);
+        });
         const label = document.createElement("label");
         label.textContent = "Collision";
         const select = document.createElement("select");
@@ -1747,6 +1533,11 @@ function refreshUi(world: World, root: HTMLElement): void {
     root.querySelector<HTMLSelectElement>("[data-snap]")!.value = String(editor.snap);
     root.querySelector<HTMLInputElement>("[data-speed]")!.value = String(editor.cameraSpeed);
     root.querySelector<HTMLInputElement>("[data-failure-boundary]")!.value = String(level.failureBoundaryY);
+    mountSectionProperties(root, level, next => {
+        try { changedLevel(world, next, cloneLevel(activeLevel(world.resource(runtime)))); }
+        catch (error) { setStatus(editor, error instanceof Error ? error.message : String(error)); }
+        refreshMountedUi(world);
+    });
     button(root, "undo").disabled = editor.undo.length === 0;
     button(root, "redo").disabled = editor.redo.length === 0;
     const selected = selectedObject(world);
@@ -1782,7 +1573,7 @@ function mountEditorUi(world: World): HTMLElement {
           <span class="editor-title">Level</span>
           <div class="editor-row"><select aria-label="Level" data-level-select></select><button data-action="load">Load</button></div>
           <div class="editor-row"><input aria-label="New level ID" data-new-id placeholder="New ID"><button data-action="new">New</button><button data-action="save">Save</button></div>
-          <label>Fail below Y<input data-failure-boundary type="number" step="0.5"></label>
+          <label>Fail below Y<input data-failure-boundary type="number" step="0.5"></label><div data-sections></div>
         </section>
         <section class="editor-section" data-panel="objects">
           <span class="editor-title">Objects</span>
@@ -1964,3 +1755,5 @@ export function initializeEditor(
         updateSelectionOutline(world);
     }
 }
+
+export { moveAxisLength, moveAxisHalfExtents } from "./editor-picking";

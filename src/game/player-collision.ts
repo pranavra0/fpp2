@@ -3,6 +3,7 @@ import type { World } from "@dylanebert/shallot";
 import { PLAYER_TRIGGER_CAPSULE_DIAMETER_M, PLAYER_TRIGGER_CAPSULE_HEIGHT_M } from "../config/gameplay";
 import type { PlayerContact, PlayerPose, PlayerSweep } from "../sim";
 import type { Vec3 } from "../vec";
+import { shapeDistance } from "@dylanebert/shallot/standard/physics";
 import { LandingSurface } from "./physics";
 
 const AXES = ["x", "y", "z"] as const;
@@ -75,14 +76,15 @@ function segmentBoxDistance(a: Vec3, b: Vec3, half: Vec3): { distance: number; n
     return { distance: Math.sqrt(bestSquared), normal };
 }
 
-function sweepCapsule(previous: Capsule, current: Capsule, half: Vec3): PlayerContact | undefined {
+function sweepCapsule(previous: Capsule, current: Capsule, half: Vec3, distanceTo = segmentBoxDistance): PlayerContact | undefined {
     const da = { x: current.a.x - previous.a.x, y: current.a.y - previous.a.y, z: current.a.z - previous.a.z };
     const db = { x: current.b.x - previous.b.x, y: current.b.y - previous.b.y, z: current.b.z - previous.b.z };
     const speed = Math.max(Math.hypot(da.x, da.y, da.z), Math.hypot(db.x, db.y, db.z));
     if (speed < 1e-10) return undefined;
     let fraction = 0;
-    for (let iteration = 0; iteration < 64; iteration++) {
-        const { distance, normal } = segmentBoxDistance(mix(previous.a, current.a, fraction), mix(previous.b, current.b, fraction), half);
+    // Nearly tangent rotating rods can advance only a small fraction against each separating plane.
+    for (let iteration = 0; iteration < 512; iteration++) {
+        const { distance, normal } = distanceTo(mix(previous.a, current.a, fraction), mix(previous.b, current.b, fraction), half);
         const closing = Math.min(...[da, db].map(d => d.x * normal.x + d.y * normal.y + d.z * normal.z));
         if (closing >= -1e-10) return undefined;
         const separation = distance - previous.radius;
@@ -116,17 +118,19 @@ export function findPlayerContact(world: World, sweep: PlayerSweep): PlayerConta
             const z = v.z - centerZ + (previous ? displacement.z * (1 - startFraction) : 0);
             return { x: cosine * x - sine * z, y, z: sine * x + cosine * z };
         };
+        const grade = surfaces.grade.get(eid);
+        const distanceTo = grade === 0 ? segmentBoxDistance : slopeDistance(world, grade);
         for (let index = 0; index < previous.length; index++) {
             const a = previous[index]!;
             const b = current[index]!;
             const contact = sweepCapsule({ a: local(a.a, true), b: local(a.b, true), radius: a.radius },
-                { a: local(b.a), b: local(b.b), radius: b.radius }, half);
+                { a: local(b.a), b: local(b.b), radius: b.radius }, half, distanceTo);
             if (contact && index === 1 && sweep.supportPlatform === eid && Math.abs(contact.normal.y) < 0.5) continue;
             if (!contact || (first && contact.fraction >= first.fraction)) continue;
             // Tip landings own the top plane; volume contacts still block earlier walls and ceilings.
-            if (index === 1 && contact.normal.y > 0.99999 &&
-                sweep.previous.tip.y >= surfaces.topY.get(eid) - displacement.y * (1 - startFraction) - 1e-6 &&
-                Math.abs(sweep.current.tip.y - surfaces.topY.get(eid)) < 1e-6) continue;
+            if (index === 1 && contact.normal.y > 0.9 &&
+                local(sweep.previous.tip, true).y >= half.y + grade * local(sweep.previous.tip, true).x - 1e-6 &&
+                Math.abs(local(sweep.current.tip).y - half.y - grade * local(sweep.current.tip).x) < 1e-6) continue;
             const n = contact.normal;
             first = { displacement, velocity: { x: poses.velocityX.get(eid), y: poses.velocityY.get(eid), z: poses.velocityZ.get(eid) }, fraction: contact.fraction, normal: { x: cosine * n.x + sine * n.z, y: n.y, z: -sine * n.x + cosine * n.z } };
         }
@@ -143,5 +147,19 @@ export function playerOccupiesSurface(world: World, eid: number, pose: PlayerPos
         const x = v.x - surface.centerX.get(eid), z = v.z - surface.centerZ.get(eid);
         return { x: cosine * x - sine * z, y: v.y - surface.topY.get(eid) + half.y, z: sine * x + cosine * z };
     };
-    return capsules(pose).some(capsule => segmentBoxDistance(local(capsule.a), local(capsule.b), half).distance <= capsule.radius + SKIN);
+    const distanceTo = surface.grade.get(eid) === 0 ? segmentBoxDistance : slopeDistance(world, surface.grade.get(eid));
+    return capsules(pose).some(capsule => distanceTo(local(capsule.a), local(capsule.b), half).distance <= capsule.radius + SKIN);
+}
+
+function slopeDistance(world: World, grade: number): typeof segmentBoxDistance {
+    return (a, b, half) => {
+        const points: Vec3[] = [];
+        for (const x of [-half.x, half.x]) for (const y of [-half.y, half.y]) for (const z of [-half.z, half.z]) points.push({ x, y: y + grade * x, z });
+        const result = shapeDistance(world, {
+            proxyA: { points, count: 8, radius: 0 }, proxyB: { points: [a, b], count: 2, radius: 0 },
+            transform: { p: { x: 0, y: 0, z: 0 }, q: { v: { x: 0, y: 0, z: 0 }, s: 1 } }, useRadii: false,
+        }, { count: 0, metric: 0, indexA: [0, 0, 0, 0], indexB: [0, 0, 0, 0] });
+        const normal = { ...result.normal };
+        return { distance: result.distance, normal };
+    };
 }

@@ -8,7 +8,8 @@ import { advanceGameplay, createGameplayProgress } from "../src/game/gameplay";
 import { resetGameplayProgress } from "../src/game/gameplay-state";
 import { addLevelPhysics, findLandingSurface, PogoWorldCollisionPlugin } from "../src/game/physics";
 import { resetPlayerToPosition, runtime } from "../src/game/state";
-import { createSim, NEUTRAL_CONTROLS, step } from "../src/sim";
+import { createSim, NEUTRAL_CONTROLS, } from "../src/sim";
+import { step } from "../src/game/simulation-step";
 import { overlappingCapsuleTriggers, PLAYER_TRIGGER_CAPSULE, sweepCapsuleTriggers } from "../src/game/trigger-contact";
 
 setDefaultTimeout(TIMEOUT.node);
@@ -126,4 +127,19 @@ test("first level supports checkpoint, failure respawn, goal, and restart transi
     } finally {
         app.dispose();
     }
+});
+
+test("ordered checkpoint progress permits shortcuts and ignores earlier checkpoints", async () => {
+    const level = await readFirstLevel();
+    const first = level.objects.find(object => object.role === "checkpoint")!;
+    const later = { ...first, id: "checkpoint-later", transform: { ...first.transform, position: [20, 4, -20] as const } };
+    const ordered = parseLevelDefinition({ ...level, objects: [...level.objects, later], sections: [
+        level.sections![0], level.sections![1], { id: "later", checkpointId: later.id, instruction: "Reach the goal." },
+    ] });
+    const progress = createGameplayProgress(ordered);
+    const contacts = (id: string) => [{ contacts: [{ id, fraction: 0 }], insideTriggerIds: [] }];
+    expect(advanceGameplay(ordered, progress, later.transform.position, contacts(later.id))).toBe("checkpoint");
+    expect(progress.checkpointId).toBe(later.id);
+    expect(advanceGameplay(ordered, progress, first.transform.position, contacts(first.id))).toBeNull();
+    expect(progress.respawnPosition).toEqual(later.transform.position);
 });

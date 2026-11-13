@@ -2,7 +2,7 @@ import { Devices, requestPointerLock, type World } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
 import { campaignControlEnabled } from "../content/campaign";
 import { editorState, isEditing } from "./editor-state";
-import { activeLevel, runtime } from "./state";
+import { activeLevel, clearMovement, runtime } from "./state";
 import { gameplayProgress } from "./gameplay-state";
 import { restartGameplay } from "./gameplay-system";
 
@@ -16,15 +16,7 @@ export const ReadControls = {
         const held = devices.keys.held;
         const editor = world.resource(editorState);
         if (isEditing(editor)) {
-            Object.assign(state.controls, {
-                leanX: 0,
-                leanZ: 0,
-                compress: false,
-                jumpPressed: false,
-                extend: false,
-                retract: false,
-            });
-            state.pendingJumpPress = false;
+            clearMovement(state);
             return;
         }
         const active = devices.enabled;
@@ -40,15 +32,7 @@ export const ReadControls = {
             return;
         }
         if (progress.mode !== "active") {
-            Object.assign(state.controls, {
-                leanX: 0,
-                leanZ: 0,
-                compress: false,
-                jumpPressed: false,
-                extend: false,
-                retract: false,
-            });
-            state.pendingJumpPress = false;
+            clearMovement(state);
             return;
         }
         const controls = state.controls;

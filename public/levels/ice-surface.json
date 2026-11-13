@@ -107,9 +107,6 @@
           1,
           1
         ]
-      },
-      "surface": {
-        "profile": "ice"
       }
     },
     {
@@ -247,6 +244,18 @@
           1
         ]
       }
+    }
+  ],
+  "sections": [
+    {
+      "id": "start",
+      "checkpointId": null,
+      "instruction": "Ice has low traction. Align your momentum before landing."
+    },
+    {
+      "id": "finish",
+      "checkpointId": "checkpoint",
+      "instruction": "Hold Space on ice to slide. Release to launch; holding longer does not increase launch strength."
     }
   ]
 }

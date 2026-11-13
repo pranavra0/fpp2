@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { parseLevelDefinition } from "../src/content/level";
 import { advanceCrumble, contactCrumble, motionOffset, type PlatformMotion } from "../src/platforms";
 import { DEFAULT_TUNING } from "../src/config/gameplay";
-import { createSim, NEUTRAL_CONTROLS, step, type LandingContact } from "../src/sim";
+import { createSim, NEUTRAL_CONTROLS, type LandingContact } from "../src/sim";
+import { step } from "../src/game/simulation-step";
 import prototype from "../public/levels/prototype.json";
 
 const motion: PlatformMotion = { path: [[0, 0, 0], [3, 0, 0], [3, 4, 0]], duration: 7, phase: 0, mode: "ping-pong" };

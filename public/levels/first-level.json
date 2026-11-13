@@ -25,7 +25,7 @@
         "scale": [
           12,
           1,
-        12
+          12
         ]
       },
       "visual": {
@@ -244,6 +244,18 @@
           1
         ]
       }
+    }
+  ],
+  "sections": [
+    {
+      "id": "start",
+      "checkpointId": null,
+      "instruction": "Use WASD to steer. The pogo bounces automatically."
+    },
+    {
+      "id": "finish",
+      "checkpointId": "checkpoint-1",
+      "instruction": "Steer between the remaining broad platforms and reach the goal."
     }
   ]
 }

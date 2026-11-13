@@ -177,3 +177,14 @@ test("platform collision modes round trip and reject invalid modes and triggers"
     expect(() => parseLevelDefinition(withMode("invalid"))).toThrow("collision.mode");
     expect(() => parseLevelDefinition(withMode("one-way", level.objects.find(entry => entry.role === "ground")!))).toThrow("collision.mode");
 });
+
+test("ordered section parsing rejects broken checkpoint references and preserves instructions", async () => {
+    const level = await readLevelFile("first-level");
+    expect(parseLevelDefinition(JSON.parse(JSON.stringify(level))).sections).toEqual(level.sections);
+    const start = level.sections![0]!, finish = level.sections![1]!;
+    for (const sections of [
+        [], [{ ...start, checkpointId: finish.checkpointId }], [start, { ...finish, checkpointId: null }],
+        [start, { ...finish, checkpointId: "missing" }], [start, { ...finish, id: start.id }],
+        [start, finish, { ...finish, id: "duplicate-reference" }], [start, { ...finish, instruction: " " }],
+    ]) expect(() => parseLevelDefinition({ ...level, sections })).toThrow("Invalid level data");
+});

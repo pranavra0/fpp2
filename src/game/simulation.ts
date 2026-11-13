@@ -2,7 +2,8 @@ import { advancePlatforms, confirmPlatformContact, platformSupport } from "./pla
 import { type World } from "@dylanebert/shallot";
 import { StepPhysicsSystem } from "@dylanebert/shallot/standard/physics";
 import { DEFAULT_TUNING } from "../config/gameplay";
-import { simulationSubstepCount, step } from "../sim";
+import { simulationSubstepCount } from "../sim";
+import { step } from "./simulation-step";
 import { findLandingSurface } from "./physics";
 import { findPlayerContact } from "./player-collision";
 import { updateLandingMarker, updateVisualFeedback, writePose } from "./presentation";

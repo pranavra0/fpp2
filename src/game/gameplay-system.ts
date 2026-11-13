@@ -5,7 +5,7 @@ import {
     requirePointerLock,
     type World,
 } from "@dylanebert/shallot";
-import { activeLevel, resetPlayerToPosition, resetPlayerToSpawn, runtime } from "./state";
+import { activeLevel, clearMovement, resetPlayerToPosition, runtime } from "./state";
 import { gameplayProgress, resetGameplayProgress } from "./gameplay-state";
 import { advanceGameplay, type GameplayEvent } from "./gameplay";
 import { playGameAudio } from "./audio";
@@ -38,18 +38,6 @@ function setCheckpointMaterials(world: World): void {
     }
 }
 
-function clearMovement(state: ReturnType<typeof runtime.create>): void {
-    Object.assign(state.controls, {
-        leanX: 0,
-        leanZ: 0,
-        compress: false,
-        jumpPressed: false,
-        extend: false,
-        retract: false,
-    });
-    state.pendingJumpPress = false;
-}
-
 function syncTriggerOverlaps(world: World): void {
     const progress = world.resource(gameplayProgress);
     progress.insideTriggerIds.clear();
@@ -76,13 +64,7 @@ export function restartGameplay(world: World, fromStart: boolean): void {
         progress.eventRemaining = 0;
         progress.pendingContactSteps.length = 0;
     }
-    clearMovement(state);
-    resetPlayerToPosition(state, respawnPosition);
-    resetPlatforms(world, state.levelEntities);
-    syncTriggerOverlaps(world);
-    setCheckpointMaterials(world);
-    writePose(world, state);
-    updateLandingMarker(world, state);
+    resetGameplayWorld(world);
     requirePointerLock(world, true);
 }
 
@@ -121,14 +103,7 @@ function handleGameplayEvent(world: World, event: GameplayEvent): void {
         playGameAudio(world, "checkpoint", 0.9);
     } else if (event === "failure") {
         playGameAudio(world, "failure", 0.8);
-        progress.insideTriggerIds.clear();
-        progress.pendingContactSteps.length = 0;
-        clearMovement(state);
-        resetPlayerToPosition(state, progress.respawnPosition);
-        resetPlatforms(world, state.levelEntities);
-        syncTriggerOverlaps(world);
-        writePose(world, state);
-        updateLandingMarker(world, state);
+        resetGameplayWorld(world);
     } else {
         setCheckpointMaterials(world);
         playGameAudio(world, "complete", 0.9);
@@ -138,19 +113,21 @@ function handleGameplayEvent(world: World, event: GameplayEvent): void {
     }
 }
 
-export function initializeGameplay(world: World): void {
+export function resetGameplayWorld(world: World): void {
     const state = world.resource(runtime);
+    resetPlayerToPosition(state, world.resource(gameplayProgress).respawnPosition);
     resetPlatforms(world, state.levelEntities, isEditing(world.resource(editorState)));
-    const progress = world.resource(gameplayProgress);
-    resetGameplayProgress(progress, activeLevel(state));
     syncTriggerOverlaps(world);
     setCheckpointMaterials(world);
+    writePose(world, state);
+    updateLandingMarker(world, state);
+}
+
+export function initializeGameplay(world: World): void {
+    resetGameplayProgress(world.resource(gameplayProgress), activeLevel(world.resource(runtime)));
+    resetGameplayWorld(world);
 }
 
 export function resetGameplayToSpawn(world: World): void {
-    resetPlayerToSpawn(world.resource(runtime));
     initializeGameplay(world);
-    clearMovement(world.resource(runtime));
-    writePose(world, world.resource(runtime));
-    updateLandingMarker(world, world.resource(runtime));
 }

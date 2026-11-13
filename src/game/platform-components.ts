@@ -1,6 +1,6 @@
 import { Body, component, f32, type FieldType, type Resource, type World } from "@dylanebert/shallot";
 import type { LevelObjectDefinition } from "../content/level";
-import type { PlatformMotion } from "../platforms";
+import { compileMotion, type CompiledPlatformMotion } from "../platforms";
 
 const scalar: FieldType<Float64Array> & { readonly lanes: 1 } = { ctor: Float64Array, lanes: 1, name: "f64" };
 export const PlatformPose = component("PlatformPose", {
@@ -13,7 +13,7 @@ export const PlatformMotionState = component("PlatformMotion", { elapsed: scalar
 export const PlatformCrumbleState = component("PlatformCrumble", {
     phase: f32, remaining: scalar, delay: scalar, returnDelay: scalar,
 });
-export const platformPaths: Resource<Map<number, PlatformMotion>> = { create: () => new Map() };
+export const platformPaths: Resource<Map<number, CompiledPlatformMotion>> = { create: () => new Map() };
 
 export function configurePlatform(world: World, eid: number, object: LevelObjectDefinition): void {
     const [x, y, z] = object.transform.position;
@@ -24,7 +24,7 @@ export function configurePlatform(world: World, eid: number, object: LevelObject
     world.resource(platformPaths).delete(eid);
     if (object.role === "platform" && object.motion) {
         world.add(eid, PlatformMotionState);
-        world.resource(platformPaths).set(eid, structuredClone(object.motion));
+        world.resource(platformPaths).set(eid, compileMotion(object.motion));
     }
     if (object.role === "platform" && object.crumble)
         world.add(eid, PlatformCrumbleState, { delay: object.crumble.delay, returnDelay: object.crumble.returnDelay ?? -1 });

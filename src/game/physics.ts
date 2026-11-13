@@ -2,6 +2,7 @@ import { configurePlatform, platformPaths, PlatformPose, PlatformMotionState, Pl
 import { resolveSurface, SURFACE_PROFILES, type SurfaceProfile } from "../surfaces";
 import {
     Body,
+    Hulls,
     component,
     f32,
     type FieldType,
@@ -22,6 +23,8 @@ import {
 import { DEFAULT_TUNING, type Tuning } from "../config/gameplay";
 import {
     levelSurfaceContains,
+    surfaceHeightAt,
+    slopePoints,
     levelSurfaces,
     type LevelDefinition,
     type LevelObjectDefinition,
@@ -41,6 +44,7 @@ export const LandingSurface = component("LandingSurface", {
     centerZ: f32,
     rotationY: f32,
     topY: f32,
+    grade: f32,
     height: f32,
     oneWay: f32,
     width: f32,
@@ -87,12 +91,13 @@ export type LevelEntity = {
     collisionEid?: number;
     visualEids?: number[];
     indicatorEids?: number[];
+    pathIndicatorEids?: number[];
     object: LevelObjectDefinition;
     visualPlacements?: { eid: number; position: Vec3Tuple; scale: Vec3Tuple }[];
 };
 
 function levelSurface(object: LevelObjectDefinition): LevelSurface {
-    if (object.collision.kind !== "box")
+    if (object.collision.kind === "trigger-box")
         throw new Error(`Trigger object "${object.id}" has no landing surface`);
     const [surface] = levelSurfaces({
         id: "editor-object",
@@ -118,14 +123,15 @@ function addSurface(
         scale: object.transform.scale,
     });
     world.add(eid, Body);
-    world.add(eid, Shape, { geometry, scale: object.collision.dimensions });
+    world.add(eid, Shape, { geometry: object.collision.kind === "slope" ? world.resource(Hulls).add({ name: object.id, points: slopePoints(object.collision.dimensions, object.collision.rise) }) : geometry, scale: object.collision.kind === "slope" ? [1, 1, 1] : object.collision.dimensions });
     world.add(eid, LandingSurface, {
         centerX: surface.centerX,
         centerZ: surface.centerZ,
         rotationY: surface.rotationY,
         topY: surface.topY,
+        grade: surface.grade,
         height: surface.height,
-        oneWay: Number(object.collision.kind === "box" && object.collision.mode === "one-way"),
+        oneWay: Number(object.collision.kind !== "trigger-box" && object.collision.mode === "one-way"),
         width: surface.width,
         depth: surface.depth,
         edgeTolerance,
@@ -190,7 +196,7 @@ export function updateLevelEntity(
             entity.object.visual.asset !== object.visual.asset)
     )
         throw new Error(`Cannot replace the visual for level object "${entity.id}" in place`);
-    if (object.collision.kind === "box") {
+    if (object.collision.kind !== "trigger-box") {
         if (entity.collisionEid === undefined)
             throw new Error(`Collision entity missing for surface "${entity.id}"`);
         const surface = levelSurface(object);
@@ -201,12 +207,14 @@ export function updateLevelEntity(
         world.storage(Transform).translation.set(collisionEid, ...object.transform.position);
         world.storage(Transform).rotation.set(collisionEid, ...object.transform.rotation);
         world.storage(Transform).scale.set(collisionEid, ...object.transform.scale);
-        world.storage(Shape).scale.set(collisionEid, ...object.collision.dimensions);
+        world.storage(Shape).scale.set(collisionEid, ...(object.collision.kind === "slope" ? [1, 1, 1] as const : object.collision.dimensions));
+        world.storage(Shape).geometry.set(collisionEid, object.collision.kind === "slope" ? world.resource(Hulls).add({ name: object.id, points: slopePoints(object.collision.dimensions, object.collision.rise) }) : UNIT_CUBE_ID);
         const edgeTolerance = object.role === "ground" ? 0 : tuning.LANDING_EDGE_TOLERANCE_M;
         world.storage(LandingSurface).centerX.set(collisionEid, surface.centerX);
         world.storage(LandingSurface).centerZ.set(collisionEid, surface.centerZ);
         world.storage(LandingSurface).rotationY.set(collisionEid, surface.rotationY);
         world.storage(LandingSurface).topY.set(collisionEid, surface.topY);
+        world.storage(LandingSurface).grade.set(collisionEid, surface.grade);
         world.storage(LandingSurface).height.set(collisionEid, surface.height);
         world.storage(LandingSurface).oneWay.set(collisionEid, Number(object.collision.mode === "one-way"));
         world.storage(LandingSurface).width.set(collisionEid, surface.width);
@@ -299,9 +307,12 @@ export function findLandingSurface(
             y: sweep.previousTip.y + displacement.y,
             z: sweep.previousTip.z + displacement.z,
         }, currentTip: sweep.currentTip };
-        const topY = surfaces.topY.get(eid);
+        const plane = { centerX: surfaces.centerX.get(eid), centerZ: surfaces.centerZ.get(eid), rotationY: surfaces.rotationY.get(eid), topY: surfaces.topY.get(eid), grade: surfaces.grade.get(eid) };
+        const topAtStart = surfaceHeightAt(plane, relativeSweep.previousTip.x, relativeSweep.previousTip.z);
+        const topAtEnd = surfaceHeightAt(plane, relativeSweep.currentTip.x, relativeSweep.currentTip.z);
+        const topY = topAtStart;
         if (sweep.supportHandoff && Math.abs(topY - sweep.previousTip.y) > tuning.LANDING_VERTICAL_TOLERANCE_M) continue;
-        const alpha = landingAlpha(relativeSweep, topY, tuning);
+        const alpha = landingAlpha({ previousTip: { ...relativeSweep.previousTip, y: relativeSweep.previousTip.y - topAtStart }, currentTip: { ...relativeSweep.currentTip, y: relativeSweep.currentTip.y - topAtEnd } }, 0, tuning);
         if (alpha === undefined) continue;
         const x = relativeSweep.previousTip.x + (relativeSweep.currentTip.x - relativeSweep.previousTip.x) * alpha;
         const z = relativeSweep.previousTip.z + (relativeSweep.currentTip.z - relativeSweep.previousTip.z) * alpha;
@@ -325,7 +336,7 @@ export function findLandingSurface(
             q: { v: { x: rotation.x.get(eid), y: rotation.y.get(eid), z: rotation.z.get(eid) }, s: rotation.w.get(eid) } }, hit)) continue;
         const id = diagnostics.ids.get(eid);
         if (id === undefined) throw new Error("Landing surface has no authored identity");
-        candidates.push({ alpha, id, eid, topY });
+        candidates.push({ alpha, id, eid, topY: sweep.supportOnly ? topAtEnd : topAtStart + (topAtEnd - topAtStart) * alpha });
     }
 
     // Group against the actual earliest fraction so tolerance ties are independent of callback order.
@@ -344,7 +355,8 @@ export function findLandingSurface(
             y: poses.y.get(eid) - poses.previousY.get(eid),
             z: poses.z.get(eid) - poses.previousZ.get(eid),
         };
-        best = { surfaceY: selected.topY, platformId: eid, fraction: selected.alpha,
+        const grade = surfaces.grade.get(eid), angle = surfaces.rotationY.get(eid);
+        best = { gradient: { x: grade * Math.cos(angle), z: -grade * Math.sin(angle) }, surfaceY: selected.topY, platformId: eid, fraction: selected.alpha,
             point: { x: sweep.previousTip.x + translation.x * selected.alpha + displacement.x * (1 - selected.alpha),
                 y: selected.topY, z: sweep.previousTip.z + translation.z * selected.alpha + displacement.z * (1 - selected.alpha) },
             platformPosition: { x: poses.x.get(eid), y: poses.y.get(eid), z: poses.z.get(eid) },

@@ -10,7 +10,8 @@ import {
     PogoWorldCollisionPlugin,
     updateLevelEntity,
 } from "../src/game/physics";
-import { createSim, NEUTRAL_CONTROLS, step } from "../src/sim";
+import { createSim, NEUTRAL_CONTROLS, } from "../src/sim";
+import { step } from "../src/game/simulation-step";
 
 test("editing an authored platform updates its render transform and landing geometry", async () => {
     const raw = await readFile(new URL("../public/levels/prototype.json", import.meta.url), "utf8");

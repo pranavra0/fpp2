@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { DEFAULT_TUNING as tuning } from "../src/config/gameplay";
-import { createSim, effectiveCharge, landingAlpha, NEUTRAL_CONTROLS, step, type Sim, type Controls } from "../src/sim";
+import { createSim, effectiveCharge, landingAlpha, NEUTRAL_CONTROLS, type Sim, type Controls } from "../src/sim";
+import { step } from "../src/game/simulation-step";
 import { DEFAULT_SURFACE, parseAuthoredSurface, parseSurfaceSnapshot, resolveSurface, SURFACE_PROFILES, validateSurfaceResponse, type SurfaceResponse, type SurfaceSnapshot } from "../src/surfaces";
 import { parseLevelDefinition } from "../src/content/level";
 import prototype from "../public/levels/prototype.json";
@@ -136,7 +137,7 @@ test("neutral movement matches the pre-surface trace across contacts and control
     const trace = [];
     for (let i = 0; i < 2400; i++) {
         step(sim, tuning, { leanX: Math.sin(i * 0.01), leanZ: Math.cos(i * 0.017), compress: i % 137 < 42, jumpPressed: i % 137 === 0, extend: i % 200 < 20, retract: i % 200 >= 100 && i % 200 < 120 }, sweep => landingAlpha(sweep, 0) === undefined ? undefined : { surfaceY: 0 });
-        const { response, incomingDownwardSpeed, pendingLaunch, diagnostics, ...pogo } = sim.pogo;
+        const { response, incomingDownwardSpeed, pendingLaunch, diagnostics, gradient, ...pogo } = sim.pogo;
         trace.push(structuredClone({ tick: sim.tick, body: sim.body, pole: sim.pole, pogo }));
     }
     expect(Bun.hash(JSON.stringify(trace)).toString()).toBe("2238867786155907160");
@@ -216,7 +217,7 @@ test("per-platform coefficient overrides round trip, inherit omitted values and 
 
 
 test("ice reduces steering and horizontal push-off while preserving momentum at uncharged launch strength", () => {
-    const normal = resolveSurface(), ice = resolveSurface({ profile: "ice" });
+    const normal = resolveSurface({ profile: "default", overrides: { chargeScale: 0 } }), ice = resolveSurface({ profile: "ice" });
     const controls = { ...NEUTRAL_CONTROLS, leanX: -1, leanZ: 0.5, compress: true };
     const baseline = contact(normal), sliding = contact(ice);
     for (let i = 0; i < 12; i++) {
@@ -228,7 +229,8 @@ test("ice reduces steering and horizontal push-off while preserving momentum at 
     expect(sliding.pogo.contactTip.x).toBeGreaterThan(baseline.pogo.contactTip.x + 0.7);
     depart(baseline, normal);
     depart(sliding, ice);
-    expect(sliding.body.vel.y).toBeCloseTo(tuning.LAUNCH_SPEED_MPS);
+    expect(sliding.body.vel.y).toBeCloseTo(baseline.body.vel.y);
+    expect(sliding.pogo.diagnostics.charge).toBe(0);
     expect(sliding.pogo.diagnostics.powered.x).toBeCloseTo(baseline.pogo.diagnostics.powered.x * ice.traction);
     expect(sliding.pogo.diagnostics.powered.z).toBeCloseTo(baseline.pogo.diagnostics.powered.z * ice.traction);
     const neutral = depart(contact(ice), ice);

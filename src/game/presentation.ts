@@ -5,6 +5,7 @@ import { CAMERA_TUNING } from "../config/camera";
 import { DEFAULT_TUNING } from "../config/gameplay";
 import {
     levelSurfaceContains,
+    surfaceHeightAt,
     levelSurfaces,
     type LevelDefinition,
 } from "../content/level";
@@ -76,9 +77,11 @@ export function predictLanding(
     const tipZ = body.pos.z - pole.d.z * pole.length;
     let first: LandingPrediction | undefined;
 
+    // Prediction stops after three seconds because future input and platform contacts are unknown.
+    const predictionLimit = 3;
     // Constant horizontal speed avoids simulating future control changes just to place the marker.
     const consider = (time: number | undefined, surfaceY: number, certain: boolean): void => {
-        if (time === undefined || (first !== undefined && time >= first.time)) return;
+        if (time === undefined || time > predictionLimit || (first !== undefined && time >= first.time)) return;
         first = {
             position: {
                 x: tipX + body.vel.x * time,
@@ -91,8 +94,9 @@ export function predictLanding(
         };
     };
 
-    for (const surface of levelSurfaces(level)) {
-        const trajectory = trajectories?.find(entry => entry.id === surface.id);
+    const byId = trajectories && new Map(trajectories.map(entry => [entry.id, entry]));
+    for (const surface of cachedSurfaces(level)) {
+        const trajectory = byId?.get(surface.id);
         if (trajectories && !trajectory?.available) continue;
         const motion = trajectory?.motion;
         const accept = (time: number, offset: Vec3): void => {
@@ -102,21 +106,24 @@ export function predictLanding(
             const bounds = { ...surface, centerX: surface.centerX + offset.x, centerZ: surface.centerZ + offset.z };
             const edgeTolerance = surface.role === "ground" ? 0 : DEFAULT_TUNING.LANDING_EDGE_TOLERANCE_M;
             const withinSurface = levelSurfaceContains(bounds, x, z, edgeTolerance);
-            if (surface.role === "ground" || withinSurface) consider(time, surface.topY + offset.y, withinSurface);
+            if (surface.role === "ground" || withinSurface) consider(time, surfaceHeightAt({ ...bounds, topY: surface.topY + offset.y }, x, z), withinSurface);
         };
         if (!motion) {
-            const time = positiveDescendingCrossingTime(tipY, body.vel.y, surface.topY);
+            const slopeVelocity = surface.grade * (Math.cos(surface.rotationY) * body.vel.x - Math.sin(surface.rotationY) * body.vel.z);
+            const time = positiveDescendingCrossingTime(tipY, body.vel.y - slopeVelocity, surfaceHeightAt(surface, tipX, tipZ));
             if (time !== undefined) accept(time, { x: 0, y: 0, z: 0 });
             continue;
         }
         const dt = 1 / DEFAULT_TUNING.SIM_HZ;
-        const limit = Math.min(30, positiveDescendingCrossingTime(tipY, body.vel.y, level.failureBoundaryY) ?? 5);
+        const limit = Math.min(predictionLimit, positiveDescendingCrossingTime(tipY, body.vel.y, level.failureBoundaryY) ?? 5);
         const elapsed = trajectory.elapsed;
         for (let start = 0; start < limit && (!first || start < first.time); start += dt) {
             const previous = motionOffset(motion, elapsed + start);
             const current = motionOffset(motion, elapsed + start + dt);
             const relativeY = tipY + body.vel.y * start - 0.5 * DEFAULT_TUNING.GRAVITY_MPS2 * start * start;
-            const time = positiveDescendingCrossingTime(relativeY, body.vel.y - DEFAULT_TUNING.GRAVITY_MPS2 * start - (current.y - previous.y) / dt, surface.topY + previous.y);
+            const slopeVelocity = surface.grade * (Math.cos(surface.rotationY) * (body.vel.x - (current.x - previous.x) / dt) - Math.sin(surface.rotationY) * (body.vel.z - (current.z - previous.z) / dt));
+            const surfaceY = surfaceHeightAt({ ...surface, centerX: surface.centerX + previous.x, centerZ: surface.centerZ + previous.z, topY: surface.topY + previous.y }, tipX + body.vel.x * start, tipZ + body.vel.z * start);
+            const time = positiveDescendingCrossingTime(relativeY, body.vel.y - DEFAULT_TUNING.GRAVITY_MPS2 * start - (current.y - previous.y) / dt - slopeVelocity, surfaceY);
             if (time === undefined || time > dt) continue;
             const fraction = time / dt;
             accept(start + time, { x: previous.x + (current.x - previous.x) * fraction,
@@ -219,3 +226,10 @@ export function writePose(world: World, state: GameRuntime): void {
     pose.scale.set(state.tip, 0.34 + 0.05 * charge, 0.2, 0.34 + 0.05 * charge);
 }
 
+
+const surfaceCache = new WeakMap<LevelDefinition, ReturnType<typeof levelSurfaces>>();
+function cachedSurfaces(level: LevelDefinition): ReturnType<typeof levelSurfaces> {
+    let surfaces = surfaceCache.get(level);
+    if (!surfaces) { surfaces = levelSurfaces(level); surfaceCache.set(level, surfaces); }
+    return surfaces;
+}

@@ -87,15 +87,7 @@ export function resetPlayerToSpawn(state: GameRuntime): void {
 export function resetPlayerToPosition(state: GameRuntime, position: readonly [number, number, number]): void {
     const spawn = position;
     state.sim = createSim({ x: spawn[0], y: spawn[1], z: spawn[2] });
-    Object.assign(state.controls, {
-        leanX: 0,
-        leanZ: 0,
-        compress: false,
-        jumpPressed: false,
-        extend: false,
-        retract: false,
-    });
-    state.pendingJumpPress = false;
+    clearMovement(state);
 
     const focus = state.cameraFocus;
     setVec3(focus, spawn[0], spawn[1] + CAMERA_TUNING.TARGET_HEIGHT_M, spawn[2]);
@@ -108,4 +100,16 @@ export function resetPlayerToPosition(state: GameRuntime, position: readonly [nu
     state.launchFovPulse = 0;
     state.lastContactId = state.sim.pogo.contactId;
     state.lastLaunchId = state.sim.pogo.lastLaunchedContactId;
+}
+
+export function clearMovement(state: GameRuntime): void {
+    Object.assign(state.controls, {
+        leanX: 0,
+        leanZ: 0,
+        compress: false,
+        jumpPressed: false,
+        extend: false,
+        retract: false,
+    });
+    state.pendingJumpPress = false;
 }

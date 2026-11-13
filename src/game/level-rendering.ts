@@ -2,6 +2,7 @@ import { capturePlatformVisuals } from "./platforms";
 import { resolveSurface } from "../surfaces";
 import {
     MeshInstance,
+    Meshes,
     MeshMaterial,
     Transform,
     type Resource,
@@ -9,6 +10,7 @@ import {
 } from "@dylanebert/shallot";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import { loadGltfScene, spawnGltfScene, type Gltf } from "@dylanebert/shallot/gltf";
+import { slopePoints } from "../content/level";
 import type {
     LevelAssetId,
     LevelDefinition,
@@ -142,7 +144,7 @@ function addBoxVisual(
         rotation: object.transform.rotation,
         scale: visualScale(object),
     });
-    world.add(eid, MeshInstance);
+    world.add(eid, MeshInstance, { mesh: object.collision.kind === "slope" ? slopeMesh(world, object.collision.dimensions, object.collision.rise) : 0 });
     world.add(eid, MeshMaterial, material);
     return eid;
 }
@@ -150,6 +152,33 @@ function addBoxVisual(
 function updateSurfaceIndicators(world: World, entity: LevelEntity, object: LevelObjectDefinition, material: MaterialHandle): void {
     for (const eid of entity.indicatorEids ?? []) world.destroy(eid);
     entity.indicatorEids = [];
+    entity.pathIndicatorEids = [];
+    if (object.collision.kind === "trigger-box") return;
+    const addLine = (a: Vec3Tuple, b: Vec3Tuple) => {
+        const eid = world.create(), dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+        const length = Math.hypot(dx, dy, dz);
+        if (length === 0) return;
+        const direction = [dx / length, dy / length, dz / length];
+        const qLength = Math.hypot(direction[2]!, 0, -direction[0]!, 1 + direction[1]!);
+        const rotation = qLength < 1e-8 ? [1, 0, 0, 0] as const : [direction[2]! / qLength, 0, -direction[0]! / qLength, (1 + direction[1]!) / qLength] as const;
+        world.add(eid, Transform, { translation: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], rotation, scale: [0.04, length, 0.04] });
+        world.add(eid, MeshInstance);
+        world.add(eid, MeshMaterial, material);
+        entity.indicatorEids!.push(eid);
+        return eid;
+    };
+    if (object.role === "platform" && object.motion) {
+        const points = object.motion.mode === "loop" ? [...object.motion.path, object.motion.path[0]!] : object.motion.path;
+        for (let index = 1; index < points.length; index++) {
+            const place = (p: Vec3Tuple): Vec3Tuple => [p[0] + object.transform.position[0], p[1] + object.transform.position[1] + object.transform.scale[1] / 2 + 0.1, p[2] + object.transform.position[2]];
+            const eid = addLine(place(points[index - 1]!), place(points[index]!));
+            if (eid !== undefined) (entity.pathIndicatorEids ??= []).push(eid);
+        }
+    }
+    if (object.collision.mode === "one-way") {
+        const { position: p, scale: s } = object.transform;
+        for (const side of [-1, 1]) addLine([p[0] - s[0] * 0.4, p[1] + s[1] / 2 + 0.06, p[2] + side * s[2] * 0.4], [p[0] + s[0] * 0.4, p[1] + s[1] / 2 + 0.06, p[2] + side * s[2] * 0.4]);
+    }
     if (!("surface" in object) || !object.surface || object.surface.profile === "default") return;
     const { position, scale } = object.transform;
     const topY = position[1] + scale[1] * object.collision.dimensions[1] / 2 + 0.025;
@@ -158,7 +187,7 @@ function updateSurfaceIndicators(world: World, entity: LevelEntity, object: Leve
     const size = Math.min(1, scale[0] * object.collision.dimensions[0] * 0.3, scale[2] * object.collision.dimensions[2] * 0.3);
     const bar = (x: number, z: number, length: number, angle: number) => {
         const eid = world.create();
-        world.add(eid, Transform, { translation: [position[0] + x, topY, position[2] + z],
+        world.add(eid, Transform, { translation: [position[0] + x, topY + (object.collision.kind === "slope" ? object.collision.rise * scale[1] / (scale[0] * object.collision.dimensions[0]) * (Math.cos(rotationY) * x - Math.sin(rotationY) * z) : 0), position[2] + z],
             scale: [length, 0.035, size * 0.09], rotation: [0, Math.sin(angle / 2), 0, Math.cos(angle / 2)] });
         world.add(eid, MeshInstance);
         world.add(eid, MeshMaterial, material);
@@ -222,6 +251,7 @@ export function updateLevelRendering(
 ): void {
     updateSurfaceIndicators(world, entity, object, indicatorMaterial);
     if (object.visual.kind !== "gltf") {
+        if (object.collision.kind === "slope") for (const eid of entity.visualEids ?? []) world.storage(MeshInstance).mesh.set(eid, slopeMesh(world, object.collision.dimensions, object.collision.rise));
         capturePlatformVisuals(world, entity);
         return;
     }
@@ -240,4 +270,19 @@ export function updateLevelRendering(
     for (const eid of entity.visualEids ?? []) world.destroy(eid);
     entity.visualEids = placement.entities;
     capturePlatformVisuals(world, entity);
+}
+
+function slopeMesh(world: World, dimensions: Vec3Tuple, rise: number): number {
+    const points = slopePoints(dimensions, rise);
+    const vertices: number[] = [], indices: number[] = [];
+    const faces = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+    for (const [a, b, c, d] of faces as [number, number, number, number][]) for (const triangle of [[a, b, c], [a, c, d]]) {
+        const p = triangle.map(index => [points[index * 3]!, points[index * 3 + 1]!, points[index * 3 + 2]!] as const);
+        const u = p[1]!.map((v, i) => v - p[0]![i]!), v = p[2]!.map((v, i) => v - p[0]![i]!);
+        const n = [u[1]! * v[2]! - u[2]! * v[1]!, u[2]! * v[0]! - u[0]! * v[2]!, u[0]! * v[1]! - u[1]! * v[0]!];
+        const length = Math.hypot(...n), offset = vertices.length / 8;
+        for (const point of p) vertices.push(...point, 0, n[0]! / length, n[1]! / length, n[2]! / length, 0);
+        indices.push(offset, offset + 1, offset + 2);
+    }
+    return world.resource(Meshes).add({ name: "slope", vertices: new Float32Array(vertices), indices: new Uint32Array(indices) });
 }

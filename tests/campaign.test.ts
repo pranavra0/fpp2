@@ -1,75 +1,91 @@
 import { expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
-import {
-    CAMPAIGN_STAGES,
-    campaignControlEnabled,
-    campaignLevelForStart,
-    campaignStage,
-    nextCampaignStage,
-    unlockedCampaignStageCount,
-} from "../src/content/campaign";
+import { readFile, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { CAMPAIGN_STAGES, campaignControlEnabled } from "../src/content/campaign";
 import { parseLevelDefinition } from "../src/content/level";
+import { validateCampaignContent } from "../src/content/campaign-validation";
+import { campaignLevelForStart, completeCampaignLevel, freshCampaignSave, migrateLegacyCampaignSave, parseCampaignSave, readCampaignSession, unlockedCampaignIds, writeCampaignSession, CAMPAIGN_SAVE_KEY, LEGACY_SAVE_KEY } from "../src/game/campaign-progress";
 
-test("campaign lessons add one mechanic at a time and keep earlier controls", () => {
-    expect(CAMPAIGN_STAGES.map((stage) => stage.newMechanic)).toEqual([
-        "WASD steering",
-        "Charging",
-        "Pole extension and retraction",
-        "Elastic platforms",
-        "Grip platforms",
-        "Directional launches",
-        "Ice",
-    ]);
-    expect(campaignControlEnabled("first-level", "steering")).toBe(true);
+const original = ["first-level", "charge-course", "pole-length", "elastic-surface", "grip-surface", "directional-surface", "ice-surface"];
+
+test("campaign content uses taught behaviors, ordered sections and safe reset supports", async () => {
+    const levels = new Map();
+    for (const stage of CAMPAIGN_STAGES) {
+        const url = new URL(`../public/levels/${stage.id}.json`, import.meta.url);
+        expect((await stat(url)).size).toBeLessThanOrEqual(256 * 1024);
+        levels.set(stage.id, parseLevelDefinition(JSON.parse(await readFile(url, "utf8"))));
+    }
+    validateCampaignContent(levels, id => existsSync(new URL(`../public/models/${id}.glb`, import.meta.url)));
+    const first = levels.get(CAMPAIGN_STAGES[0]!.id);
+    first.objects = first.objects.filter((object: { role: string }) => object.role !== "goal");
+    expect(() => validateCampaignContent(levels, () => true)).toThrow("expected one goal");
     expect(campaignControlEnabled("first-level", "charge")).toBe(false);
-    expect(campaignControlEnabled("first-level", "pole-length")).toBe(false);
-    expect(campaignControlEnabled("charge-course", "charge")).toBe(true);
     expect(campaignControlEnabled("charge-course", "pole-length")).toBe(false);
-    expect(campaignControlEnabled("pole-length", "charge")).toBe(true);
-    expect(campaignControlEnabled("pole-length", "pole-length")).toBe(true);
     expect(campaignControlEnabled("prototype", "pole-length")).toBe(true);
-    for (let index = 1; index < CAMPAIGN_STAGES.length; index++) {
-        expect(CAMPAIGN_STAGES[index]!.mechanics.length).toBe(index + 1);
-        expect(CAMPAIGN_STAGES[index]!.mechanics.slice(0, index)).toEqual(
-            CAMPAIGN_STAGES[index - 1]!.mechanics,
-        );
-    }
 });
 
-test("campaign start resumes the latest unlocked lesson and blocks locked lessons outside development", () => {
-    expect(unlockedCampaignStageCount(null)).toBe(1);
-    expect(unlockedCampaignStageCount("invalid")).toBe(1);
-    expect(unlockedCampaignStageCount("999")).toBe(CAMPAIGN_STAGES.length);
-    expect(campaignLevelForStart(null, 1, false)).toBe("first-level");
-    expect(campaignLevelForStart(null, 3, false)).toBe("pole-length");
-    expect(campaignLevelForStart("ice-surface", 2, false)).toBe("charge-course");
-    expect(campaignLevelForStart("ice-surface", 2, true)).toBe("ice-surface");
-    expect(campaignLevelForStart("prototype", 2, false)).toBe("charge-course");
-    expect(campaignLevelForStart("prototype", 2, true)).toBe("prototype");
-    expect(() => campaignLevelForStart(null, 0, false)).toThrow("Invalid unlocked campaign stage count");
-    expect(campaignStage("directional-surface")?.newMechanic).toBe("Directional launches");
-    expect(nextCampaignStage("charge-course")?.id).toBe("pole-length");
-    expect(nextCampaignStage("ice-surface")).toBeUndefined();
+test("fresh completion and final completion persist by identity without granting prerequisites", () => {
+    let save = freshCampaignSave();
+    expect(unlockedCampaignIds(save)).toEqual([CAMPAIGN_STAGES[0]!.id]);
+    const final = CAMPAIGN_STAGES.at(-1)!.id;
+    save = completeCampaignLevel(save, final);
+    expect(save.completedLevelIds).toContain(final);
+    expect(unlockedCampaignIds(save)).toHaveLength(1);
+    for (const stage of CAMPAIGN_STAGES) save = completeCampaignLevel(save, stage.id);
+    expect(unlockedCampaignIds(save)).toHaveLength(CAMPAIGN_STAGES.length);
+    expect(completeCampaignLevel(save, final)).toBe(save);
+    expect(parseCampaignSave(JSON.stringify(save))).toEqual(save);
 });
 
-test("campaign levels parse and introduce their authored surface profiles in order", async () => {
-    const expectedProfiles = [
-        ["default"],
-        ["default"],
-        ["default"],
-        ["default", "elastic"],
-        ["default", "grip"],
-        ["default", "directional"],
-        ["default", "ice"],
-    ];
-    for (const [index, stage] of CAMPAIGN_STAGES.entries()) {
-        const text = await readFile(new URL(`../public/levels/${stage.id}.json`, import.meta.url), "utf8");
-        const level = parseLevelDefinition(JSON.parse(text));
-        expect(level.id).toBe(stage.id);
-        const profiles = new Set(level.objects.flatMap((object) =>
-            "surface" in object ? [object.surface?.profile ?? "default"] : object.role === "ground" || object.role === "platform" ? ["default"] : [],
-        ));
-        expect([...profiles].sort()).toEqual(expectedProfiles[index]!.sort());
-        expect(level.objects.some((object) => object.role === "goal")).toBe(true);
+test("legacy migration uses the frozen original order and preserves access across insertions", () => {
+    for (let count = 1; count <= original.length; count++) {
+        const save = migrateLegacyCampaignSave(String(count));
+        const accessible = original.slice(0, count).findLast(id => CAMPAIGN_STAGES.some(stage => stage.id === id))!;
+        expect(save.lastSelectedLevelId).toBe(accessible);
+        expect(unlockedCampaignIds(save)).toContain(accessible);
+        if (accessible === original[count - 1]) expect(save.completedLevelIds).not.toContain(accessible);
+        expect(save.completedLevelIds.every(id => CAMPAIGN_STAGES.some(stage => stage.id === id))).toBe(true);
+        expect(save.completedLevelIds).not.toContain(original.at(-1)!);
+        expect(campaignLevelForStart(null, save, false)).toBe(accessible);
     }
+    expect(migrateLegacyCampaignSave("999").lastSelectedLevelId).toBe(original.at(-1)!);
+    for (const input of [null, "bad", "0", "-1", "1.5", "999999999999999999999999"]) expect(migrateLegacyCampaignSave(input)).toEqual(freshCampaignSave());
+});
+
+test("save boundary rejects malformed versions and retains known identities across reorder", () => {
+    for (const value of [null, "{", "null", "[]", '{}', JSON.stringify({ ...freshCampaignSave(), version: 2 }), JSON.stringify({ ...freshCampaignSave(), completedLevelIds: [2] })]) expect(parseCampaignSave(value)).toBeUndefined();
+    const save = completeCampaignLevel(freshCampaignSave(), "charge-course");
+    const reordered = [...CAMPAIGN_STAGES].reverse();
+    const parsed = parseCampaignSave(JSON.stringify({ ...save, completedLevelIds: ["removed", "charge-course", "charge-course"], lastSelectedLevelId: "removed" }), reordered)!;
+    expect(parsed.completedLevelIds).toEqual(["charge-course"]);
+    expect(parsed.lastSelectedLevelId).toBeNull();
+    expect(unlockedCampaignIds(parsed, reordered)).toEqual([reordered[0]!.id]);
+});
+
+test("selection shares unlock rules and retains replay and development navigation", () => {
+    const save = completeCampaignLevel(freshCampaignSave(), CAMPAIGN_STAGES[0]!.id);
+    expect(campaignLevelForStart(null, save, false)).toBe(CAMPAIGN_STAGES[1]!.id);
+    expect(campaignLevelForStart("ice-surface", save, false)).toBe(CAMPAIGN_STAGES[1]!.id);
+    expect(campaignLevelForStart("first-level", save, false)).toBe("first-level");
+    expect(campaignLevelForStart("prototype", save, false)).toBe(CAMPAIGN_STAGES[1]!.id);
+    expect(campaignLevelForStart("ice-surface", save, true)).toBe("ice-surface");
+    expect(campaignLevelForStart(null, { ...save, lastSelectedLevelId: "first-level" }, false)).toBe("first-level");
+});
+
+test("storage failure preserves session progress and the legacy key until a successful write", () => {
+    const values = new Map([[LEGACY_SAVE_KEY, "7"]]);
+    let fail = true;
+    const storage = { getItem: (key: string) => values.get(key) ?? null, removeItem: (key: string) => { values.delete(key); }, setItem: (key: string, value: string) => { if (fail) throw new Error("unavailable"); values.set(key, value); } };
+    const session = readCampaignSession(storage);
+    expect(session.save.lastSelectedLevelId).toBe("ice-surface");
+    expect(session.persistenceFailure).toContain("session only");
+    expect(values.has(LEGACY_SAVE_KEY)).toBe(true);
+    session.save = completeCampaignLevel(session.save, "ice-surface");
+    fail = false;
+    expect(writeCampaignSession(session, storage)).toBe(true);
+    expect(values.has(LEGACY_SAVE_KEY)).toBe(false);
+    expect(parseCampaignSave(values.get(CAMPAIGN_SAVE_KEY)!)).toEqual(session.save);
+    const unavailable = readCampaignSession({ ...storage, getItem: () => { throw new Error("unavailable"); } });
+    expect(unavailable.save).toEqual(freshCampaignSave());
+    expect(unavailable.persistenceFailure).not.toBe("");
 });

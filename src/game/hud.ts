@@ -1,10 +1,12 @@
-import { CAMPAIGN_STAGES, campaignStage, campaignStageIndex, nextCampaignStage } from "../content/campaign";
+import { CAMPAIGN_STAGES, campaignControlEnabled, campaignStage, campaignStageIndex, nextCampaignStage } from "../content/campaign";
 import { Devices, mountOverlay, requestPointerLock, type World } from "@dylanebert/shallot";
 import { activeLevel, runtime } from "./state";
 import { gameplayProgress } from "./gameplay-state";
 import { editorState, isEditing } from "./editor-state";
 import { restartGameplay } from "./gameplay-system";
-import { unlockCampaignStage } from "./campaign-progress";
+import { campaignSession, unlockedCampaignIds, persistBrowserCampaignSession } from "./campaign-progress";
+import { activeSectionIndex } from "./gameplay";
+import { PlatformCrumbleState } from "./platform-components";
 
 const HUD_STYLE = `
 #fpp2-hud{position:absolute;inset:0;color:#eee;font:13px/1.4 system-ui,sans-serif;pointer-events:none}
@@ -31,16 +33,14 @@ function appendControlRow(container: HTMLElement, key: string, action: string): 
 function campaignControls(levelId: string): HTMLElement {
     const rows = document.createElement("div");
     rows.className = "hud-controls";
-    const stage = campaignStage(levelId);
-    const mechanics = stage?.mechanics;
-    if (mechanics === undefined || mechanics.includes("steering"))
+    if (campaignControlEnabled(levelId, "steering"))
         appendControlRow(rows, "WASD", "Steer");
-    if (mechanics === undefined || mechanics.includes("charge"))
+    if (campaignControlEnabled(levelId, "charge"))
         appendControlRow(rows, "Space", "Charge and release");
-    if (mechanics === undefined || mechanics.includes("pole-length"))
+    if (campaignControlEnabled(levelId, "pole-length"))
         appendControlRow(rows, "E / Q", "Extend / retract pole");
     appendControlRow(rows, "R", "Restart at checkpoint");
-    appendControlRow(rows, "Shift + R", "Restart lesson");
+    appendControlRow(rows, "Shift + R", "Restart level");
     appendControlRow(rows, "H", "Toggle controls");
     return rows;
 }
@@ -55,7 +55,7 @@ export function initializeGameplayHud(world: World): void {
     const root = document.createElement("div");
     root.id = "fpp2-hud";
     root.innerHTML = `<style>${HUD_STYLE}</style>
-      <div class="hud-level"><div data-hud-level></div></div>
+      <div class="hud-level"><div data-hud-level></div><label>Level <select data-hud-select></select></label><div data-hud-storage></div><div data-hud-platform></div></div>
       <div class="hud-instructions"><section class="hud-lesson" data-hud-lesson aria-label="Lesson" aria-live="polite">
         <strong data-lesson-title></strong>
         <div data-lesson-mechanic></div>
@@ -69,8 +69,8 @@ export function initializeGameplayHud(world: World): void {
       <div class="hud-event" data-hud-event hidden></div>
       <div class="hud-complete" data-hud-complete hidden>
         <span data-hud-complete-title></span>
-        <button type="button" data-hud-continue hidden>Next lesson</button>
-        <button type="button" data-hud-restart>Replay lesson</button>
+        <button type="button" data-hud-continue hidden>Next level</button>
+        <button type="button" data-hud-restart>Replay level</button>
       </div>`;
     const levelId = activeLevel(world.resource(runtime)).id;
     root.querySelector<HTMLElement>("[data-hud-controls]")!.replaceWith(campaignControls(levelId));
@@ -78,19 +78,20 @@ export function initializeGameplayHud(world: World): void {
         const currentIndex = campaignStageIndex(activeLevel(world.resource(runtime)).id);
         if (currentIndex === undefined) throw new Error("Cannot advance from a level outside the campaign");
         const next = CAMPAIGN_STAGES[currentIndex + 1];
-        if (!next) throw new Error("The campaign has no next lesson");
-        unlockCampaignStage(currentIndex + 1);
+        if (!next) throw new Error("The campaign has no next level");
         openCampaignLevel(next.id);
     });
     root.querySelector<HTMLButtonElement>("[data-hud-restart]")!.addEventListener("click", () => {
-        const currentId = activeLevel(world.resource(runtime)).id;
-        const currentIndex = campaignStageIndex(currentId);
-        if (currentIndex === CAMPAIGN_STAGES.length - 1) {
-            openCampaignLevel(CAMPAIGN_STAGES[0]!.id);
-        } else {
-            restartGameplay(world, true);
-            requestPointerLock(world);
-        }
+        restartGameplay(world, true);
+        requestPointerLock(world);
+    });
+    const selector = root.querySelector<HTMLSelectElement>("[data-hud-select]")!;
+    selector.style.pointerEvents = "auto";
+    selector.addEventListener("change", () => {
+        const session = world.resource(campaignSession);
+        session.save.lastSelectedLevelId = selector.value;
+        persistBrowserCampaignSession(session);
+        openCampaignLevel(selector.value);
     });
     const canvas = document.querySelector("canvas");
     mountOverlay(canvas, world).append(root);
@@ -121,16 +122,34 @@ const GameplayHud = {
         const stageIndex = campaignStageIndex(level.id);
         root.querySelector<HTMLElement>("[data-hud-level]")!.textContent =
             stage && stageIndex !== undefined
-                ? `Lesson ${stageIndex + 1} / ${CAMPAIGN_STAGES.length}`
+                ? `Level ${stageIndex + 1} / ${CAMPAIGN_STAGES.length}`
                 : level.id;
         lesson.hidden = stage === undefined;
         root.querySelector<HTMLElement>(".hud-level")!.hidden = stage === undefined;
         if (stage && stageIndex !== undefined) {
             root.querySelector<HTMLElement>("[data-lesson-title]")!.textContent = stage.title;
             root.querySelector<HTMLElement>("[data-lesson-mechanic]")!.textContent =
-                `New mechanic: ${stage.newMechanic}`;
-            root.querySelector<HTMLElement>("[data-lesson-instruction]")!.textContent = stage.instruction;
+                `${stage.chapterId ? `${stage.chapterId}: ` : ""}Section ${activeSectionIndex(level, progress.checkpointId) + 1} / ${level.sections?.length ?? 1}`;
+            root.querySelector<HTMLElement>("[data-lesson-instruction]")!.textContent = level.sections?.[activeSectionIndex(level, progress.checkpointId)]?.instruction ?? "Reach the goal.";
         }
+        const session = world.resource(campaignSession);
+        const unlocked = unlockedCampaignIds(session.save);
+        const selector = root.querySelector<HTMLSelectElement>("[data-hud-select]")!;
+        if (selector.dataset.ids !== unlocked.join(",")) {
+            selector.replaceChildren(...CAMPAIGN_STAGES.filter(entry => unlocked.includes(entry.id)).map(entry => {
+                const option = document.createElement("option");
+                option.value = entry.id;
+                option.textContent = entry.title;
+                return option;
+            }));
+            selector.value = level.id;
+            selector.dataset.ids = unlocked.join(",");
+        }
+        root.querySelector<HTMLElement>("[data-hud-storage]")!.textContent = session.persistenceFailure;
+        const supportId = state.sim.pogo.support?.platformId;
+        const crumble = world.storage(PlatformCrumbleState);
+        root.querySelector<HTMLElement>("[data-hud-platform]")!.textContent = supportId !== undefined && world.has(supportId, PlatformCrumbleState)
+            ? crumble.phase.get(supportId) === 0 ? "Temporary platform: ready" : `Collapse in ${crumble.remaining.get(supportId).toFixed(1)} s` : "";
         const complete = progress.mode === "complete";
         root.querySelector<HTMLElement>("[data-hud-complete]")!.hidden = !complete;
         const completionTitle = root.querySelector<HTMLElement>("[data-hud-complete-title]")!;
@@ -138,8 +157,8 @@ const GameplayHud = {
         const restartButton = root.querySelector<HTMLButtonElement>("[data-hud-restart]")!;
         const nextStage = nextCampaignStage(level.id);
         const finalCampaignStage = stageIndex === CAMPAIGN_STAGES.length - 1;
-        continueButton.hidden = !complete || nextStage === undefined;
-        restartButton.textContent = finalCampaignStage ? "Replay campaign" : "Replay lesson";
+        continueButton.hidden = !complete || nextStage === undefined || !unlocked.includes(nextStage.id);
+        restartButton.textContent = "Replay level";
         completionTitle.textContent = finalCampaignStage
             ? "Campaign complete"
             : stage

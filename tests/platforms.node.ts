@@ -8,7 +8,8 @@ import { addLevelPhysics, findLandingSurface, LandingSurface, PogoWorldCollision
 import { findPlayerContact } from "../src/game/player-collision";
 import { advancePlatforms, capturePlatformVisuals, confirmPlatformContact, platformSupport, platformTrajectories, resetPlatforms } from "../src/game/platforms";
 import { predictLanding } from "../src/game/presentation";
-import { createSim, NEUTRAL_CONTROLS, playerPose, step, type Controls, type Sim } from "../src/sim";
+import { createSim, NEUTRAL_CONTROLS, playerPose, type Controls, type Sim } from "../src/sim";
+import { step } from "../src/game/simulation-step";
 
 const dt = 1 / DEFAULT_TUNING.SIM_HZ;
 const pad = (extra: Partial<LevelBoxPlatformObjectDefinition> = {}): LevelBoxPlatformObjectDefinition => ({

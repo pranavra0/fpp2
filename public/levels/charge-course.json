@@ -245,5 +245,17 @@
         ]
       }
     }
+  ],
+  "sections": [
+    {
+      "id": "start",
+      "checkpointId": null,
+      "instruction": "Hold Space during contact, then release to charge a launch."
+    },
+    {
+      "id": "finish",
+      "checkpointId": "checkpoint",
+      "instruction": "Adjust launch strength before the next landing."
+    }
   ]
 }

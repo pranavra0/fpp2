@@ -66,6 +66,11 @@ export function advanceGameplay(
                 progress.insideTriggerIds = new Set(step.insideTriggerIds);
                 return "complete";
             }
+            if (level.sections) {
+                const current = activeSectionIndex(level, progress.checkpointId);
+                const next = level.sections.findIndex(section => section.checkpointId === trigger.id);
+                if (next <= current) continue;
+            }
             progress.checkpointId = trigger.id;
             progress.respawnPosition = trigger.transform.position;
             progress.event = "checkpoint";
@@ -84,3 +89,10 @@ export function triggerObjects(level: LevelDefinition): LevelTriggerObjectDefini
     );
 }
 
+
+export function activeSectionIndex(level: LevelDefinition, checkpointId: string | null): number {
+    if (!level.sections) return 0;
+    const index = level.sections.findIndex(section => section.checkpointId === checkpointId);
+    if (index < 0) throw new Error("Active checkpoint has no section");
+    return index;
+}

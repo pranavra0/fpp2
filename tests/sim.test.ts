@@ -6,9 +6,10 @@ import {
     landingAlpha,
     NEUTRAL_CONTROLS,
     simulationSubstepCount,
-    step,
+
     type LandingQuery,
 } from "../src/sim";
+import { step } from "../src/game/simulation-step";
 
 const groundContact: LandingQuery = (sweep) =>
     landingAlpha(sweep, 0, DEFAULT_TUNING) === undefined ? undefined : { surfaceY: 0 };

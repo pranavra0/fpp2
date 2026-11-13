@@ -1,7 +1,7 @@
 import { configurePlatform, platformPaths, PlatformPose, PlatformMotionState, PlatformCrumbleState } from "./platform-components";
 import { Body, Transform, type World } from "@dylanebert/shallot";
 import { setTransform, SyncPhysicsSystem } from "@dylanebert/shallot/standard/physics";
-import { advanceCrumble, contactCrumble, motionOffset, type CrumbleState, type PlatformMotion } from "../platforms";
+import { advanceCrumble, contactCrumble, motionOffset, type CrumbleState, type CompiledPlatformMotion } from "../platforms";
 import { playerPose, type LandingContact, type Sim, type SupportSnapshot } from "../sim";
 import { LandingSurface, type LevelEntity } from "./physics";
 import { playerOccupiesSurface } from "./player-collision";
@@ -34,6 +34,7 @@ function syncPlatform(world: World, entity: LevelEntity): boolean {
     const origin = entity.object.transform.position;
     const transform = world.storage(Transform);
     for (const visual of entity.visualPlacements ?? []) {
+        if (entity.pathIndicatorEids?.includes(visual.eid)) continue;
         transform.translation.set(visual.eid, visual.position[0] + x - origin[0], visual.position[1] + y - origin[1], visual.position[2] + z - origin[2]);
         transform.scale.set(visual.eid, available ? visual.scale[0] : 0, available ? visual.scale[1] : 0, available ? visual.scale[2] : 0);
     }
@@ -41,6 +42,7 @@ function syncPlatform(world: World, entity: LevelEntity): boolean {
 }
 
 export function resetPlatforms(world: World, entities: readonly LevelEntity[], editing = false): void {
+    invalidatePlatformIndex(entities);
     for (const entity of entities) {
         const eid = entity.collisionEid;
         if (eid === undefined) continue;
@@ -65,9 +67,15 @@ export function advancePlatforms(world: World, entities: readonly LevelEntity[],
     const motionState = world.storage(PlatformMotionState);
     const crumble = world.storage(PlatformCrumbleState);
     let availabilityChanged = false;
-    for (const entity of entities) {
-        const eid = entity.collisionEid;
-        if (eid === undefined) continue;
+    const affected = new Set<number>();
+    for (const eid of world.query([PlatformMotionState, PlatformPose])) affected.add(eid);
+    for (const eid of world.query([PlatformCrumbleState, PlatformPose])) affected.add(eid);
+    const byEid = platformEntityIndex(entities);
+    for (const eid of affected) {
+        const entity = byEid.get(eid);
+        if (!entity) throw new Error("Platform behavior has no level object");
+        const oldAvailability = pose.available.get(eid);
+        const moving = world.has(eid, PlatformMotionState);
         const previous = { x: pose.x.get(eid), y: pose.y.get(eid), z: pose.z.get(eid) };
         pose.previousX.set(eid, previous.x); pose.previousY.set(eid, previous.y); pose.previousZ.set(eid, previous.z);
         if (world.has(eid, PlatformMotionState)) {
@@ -91,7 +99,7 @@ export function advancePlatforms(world: World, entities: readonly LevelEntity[],
                 playerOccupiesSurface(world, eid, playerPose(sim)));
             writeCrumble(world, eid, next);
         }
-        availabilityChanged = syncPlatform(world, entity) || availabilityChanged;
+        if (moving || oldAvailability !== pose.available.get(eid)) availabilityChanged = syncPlatform(world, entity) || availabilityChanged;
     }
     if (availabilityChanged) SyncPhysicsSystem.update!(world);
 }
@@ -123,7 +131,7 @@ export function platformSupport(world: World, sim: Sim): SupportSnapshot | undef
 export type PlatformTrajectory = {
     id: string;
     available: boolean;
-    motion?: PlatformMotion;
+    motion?: CompiledPlatformMotion;
     elapsed: number;
     collapseIn?: number;
 };
@@ -140,4 +148,17 @@ export function platformTrajectories(world: World, entities: readonly LevelEntit
             ...(world.has(eid, PlatformCrumbleState) && crumble.phase.get(eid) === 1 ? { collapseIn: crumble.remaining.get(eid) } : {}),
         }];
     });
+}
+
+const entityIndexes = new WeakMap<readonly LevelEntity[], Map<number, LevelEntity>>();
+export function invalidatePlatformIndex(entities: readonly LevelEntity[]): void {
+    entityIndexes.delete(entities);
+}
+function platformEntityIndex(entities: readonly LevelEntity[]): Map<number, LevelEntity> {
+    let index = entityIndexes.get(entities);
+    if (!index) {
+        index = new Map(entities.flatMap(entity => entity.collisionEid === undefined ? [] : [[entity.collisionEid, entity] as const]));
+        entityIndexes.set(entities, index);
+    }
+    return index;
 }

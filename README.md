@@ -22,6 +22,8 @@ Open the local Vite URL in a browser with WebGPU support. `bun check` runs the T
 
 ## Levels
 
-The campaign starts at the latest unlocked level and advances when you reach a goal. In development, load a level by adding `?level=<id>` to the URL, for example `?level=ice-slide-practice`. The id must match a JSON file in `public/levels`.
+The campaign currently has six short starter levels: steering, charge, pole length, moving platforms, crumbling platforms, and ice. Completion is saved when you reach the goal, including the final level. The level selector replays unlocked levels; startup resumes your last valid selection. In development, load a level by adding `?level=<id>` to the URL, for example `?level=ice-slide-practice`. The id must match a JSON file in `public/levels`.
+
+To add a campaign level, save a JSON file in `public/levels` and add its ID to `CAMPAIGN_STAGES` in `src/content/campaign.ts`. Campaign order follows that array; no stage count needs updating.
 
 In development, `?editor=1` opens the level editor. See [LEVELS.md](LEVELS.md) for the level file format and editor workflow.

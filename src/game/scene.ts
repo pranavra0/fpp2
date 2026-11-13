@@ -15,7 +15,7 @@ import {
     type World,
 } from "@dylanebert/shallot";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
-import { campaignLevelForStart } from "../content/campaign";
+import { campaignLevelForStart, campaignSession, readCampaignSession, persistBrowserCampaignSession, PersistCampaignCompletion } from "./campaign-progress";
 import { initializeGameAudio } from "./audio";
 import { CAMERA_TUNING } from "../config/camera";
 import { loadLevel } from "../content/level";
@@ -26,7 +26,6 @@ import { cameraPosition } from "./camera";
 import { activeLevel, resetPlayerToSpawn, runtime } from "./state";
 import { initializeGameplay } from "./gameplay-system";
 import { initializeGameplayHud } from "./hud";
-import { readUnlockedCampaignStageCount } from "./campaign-progress";
 
 function box(
     world: World,
@@ -46,12 +45,18 @@ export async function initializeGame(world: World): Promise<void> {
     world.onDispose(() => releasePointerLock(world));
 
     const state = world.resource(runtime);
+    const session = world.resource(campaignSession);
+    try { Object.assign(session, readCampaignSession(window.localStorage)); }
+    catch { session.persistenceFailure = "Progress could not be loaded. Progress is available for this session only."; }
     const selectedLevel = campaignLevelForStart(
         new URLSearchParams(window.location.search).get("level"),
-        readUnlockedCampaignStageCount(),
+        session.save,
         import.meta.env?.DEV === true,
     );
     state.level = await loadLevel(selectedLevel);
+    session.save.lastSelectedLevelId = selectedLevel;
+    persistBrowserCampaignSession(session);
+    world.addSystem(PersistCampaignCompletion);
     resetPlayerToSpawn(state);
     const levelDefinition = activeLevel(state);
     await loadLevelAssets(world, levelDefinition);

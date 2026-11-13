@@ -245,5 +245,17 @@
         ]
       }
     }
+  ],
+  "sections": [
+    {
+      "id": "start",
+      "checkpointId": null,
+      "instruction": "Hold E to extend the pole or Q to retract it."
+    },
+    {
+      "id": "finish",
+      "checkpointId": "checkpoint",
+      "instruction": "Adjust pole length before contact and reach the goal."
+    }
   ]
 }

@@ -4,7 +4,8 @@ import { DEFAULT_TUNING } from "../src/config/gameplay";
 import type { LevelDefinition, LevelSurfaceObjectDefinition } from "../src/content/level";
 import { addLevelPhysics, findLandingSurface, PogoWorldCollisionPlugin } from "../src/game/physics";
 import { findPlayerContact } from "../src/game/player-collision";
-import { createSim, NEUTRAL_CONTROLS, playerPose, step, type Controls, type Sim } from "../src/sim";
+import { createSim, NEUTRAL_CONTROLS, playerPose, type Controls, type Sim } from "../src/sim";
+import { step } from "../src/game/simulation-step";
 
 const box = (id: string, position: readonly [number, number, number], scale: readonly [number, number, number], mode?: "solid" | "one-way"): LevelSurfaceObjectDefinition => ({
     id, role: "platform", transform: { position, rotation: [0, 0, 0, 1], scale },
@@ -115,4 +116,17 @@ test("one-way platforms allow upward traversal and catch downward tip landings",
         expect(sim.pogo.state).toBe("Compression");
         expect(sim.pogo.contactTip.y).toBeCloseTo(3.1);
     });
+});
+
+test("a nearly tangent rotating rod clears a platform corner without exhausting the sweep", async () => {
+    const app = await createApp({ defaults: false, plugins: [PogoWorldCollisionPlugin] });
+    try {
+        addLevelPhysics(app.world, { id: "corner", spawnPosition: [0, 3, 0], failureBoundaryY: -20, objects: [box("platform", [0, 0, 0], [7, 0.6, 7])] });
+        app.world.step(Time.FIXED_DT);
+        const sweep = {
+            previous: { position: { x: -2.4720279067211024, y: 1.2097308226824892, z: -3.124444275552662 }, tip: { x: -2.6258681497665197, y: 0.3000000119209289, z: -3.5100905274090053 } },
+            current: { position: { x: -2.502654152457552, y: 1.1075709648776875, z: -3.1829094356453425 }, tip: { x: -2.6258681497665197, y: 0.3000000119209289, z: -3.5100905274090053 } },
+        };
+        expect(findPlayerContact(app.world, sweep)).toBeUndefined();
+    } finally { app.dispose(); }
 });

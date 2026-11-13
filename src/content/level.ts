@@ -9,6 +9,8 @@ export type LevelObjectRole = "ground" | "platform" | "goal" | "checkpoint";
 export type LevelMaterial = LevelObjectRole;
 export type LevelAssetId = string;
 
+export type SurfaceCollision = { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" } | { kind: "slope"; dimensions: Vec3Tuple; rise: number; mode?: "solid" | "one-way" };
+
 type LevelObjectBase = {
     id: string;
     transform: {
@@ -22,7 +24,7 @@ export type LevelGroundObjectDefinition = LevelObjectBase & {
     role: "ground";
     surface?: AuthoredSurface;
     visual: { kind: "box"; material: "ground" };
-    collision: { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" };
+    collision: SurfaceCollision;
 };
 
 export type LevelBoxPlatformObjectDefinition = LevelObjectBase & {
@@ -31,7 +33,7 @@ export type LevelBoxPlatformObjectDefinition = LevelObjectBase & {
     crumble?: PlatformCrumble;
     surface?: AuthoredSurface;
     visual: { kind: "box"; material: "platform" };
-    collision: { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" };
+    collision: SurfaceCollision;
 };
 
 export type LevelModelPlatformObjectDefinition = LevelObjectBase & {
@@ -40,7 +42,7 @@ export type LevelModelPlatformObjectDefinition = LevelObjectBase & {
     crumble?: PlatformCrumble;
     surface?: AuthoredSurface;
     visual: { kind: "gltf"; asset: LevelAssetId };
-    collision: { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" };
+    collision: SurfaceCollision;
 };
 
 export type LevelSurfaceObjectDefinition =
@@ -63,7 +65,10 @@ export type LevelDefinition = {
     spawnPosition: Vec3Tuple;
     failureBoundaryY: number;
     objects: readonly LevelObjectDefinition[];
+    sections?: readonly LevelSection[];
 };
+
+export type LevelSection = { id: string; checkpointId: string | null; instruction: string };
 
 export type LevelSurface = {
     id: string;
@@ -75,6 +80,7 @@ export type LevelSurface = {
     height: number;
     depth: number;
     topY: number;
+    grade: number;
 };
 
 function invalid(path: string, message: string): never {
@@ -203,9 +209,9 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         invalid(`${path}.visual.kind`, 'expected "box" or "gltf"');
     }
     const collisionInput = record(input.collision, `${path}.collision`);
-    exactKeys(collisionInput, `${path}.collision`, ["kind", "dimensions", ...(Object.hasOwn(collisionInput, "mode") ? ["mode"] : [])]);
+    exactKeys(collisionInput, `${path}.collision`, ["kind", "dimensions", ...(Object.hasOwn(collisionInput, "mode") ? ["mode"] : []), ...(collisionInput.kind === "slope" ? ["rise"] : [])]);
     const trigger = role === "goal" || role === "checkpoint";
-    if (collisionInput.kind !== (trigger ? "trigger-box" : "box"))
+    if (trigger ? collisionInput.kind !== "trigger-box" : collisionInput.kind !== "box" && !(role === "platform" && collisionInput.kind === "slope"))
         invalid(
             `${path}.collision.kind`,
             trigger ? 'expected "trigger-box" for non-solid gameplay objects' : 'expected "box" for solid surfaces',
@@ -215,6 +221,10 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         invalid(`${path}.collision.mode`, 'expected "solid" or "one-way" on a platform');
     const collisionMode = mode === undefined ? {} : { mode: mode as "solid" | "one-way" };
     const dimensions = positiveTuple(collisionInput.dimensions, `${path}.collision.dimensions`);
+    const shape: SurfaceCollision = collisionInput.kind === "slope"
+        ? { kind: "slope", dimensions, rise: finiteNumber(Math.abs(Number(collisionInput.rise)), `${path}.collision.rise`, 0, true) * Math.sign(Number(collisionInput.rise)), ...collisionMode }
+        : { kind: "box", dimensions, ...collisionMode };
+    if (shape.kind === "slope" && (typeof collisionInput.rise !== "number" || Math.abs(shape.rise * transform.scale[1] / (dimensions[0] * transform.scale[0])) > 0.35)) invalid(path, "slope grade must be at most 0.35");
     if (role === "goal" || role === "checkpoint") {
         if (visual.kind !== "box")
             invalid(`${path}.visual.kind`, 'trigger objects require a "box" visual');
@@ -234,7 +244,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             role,
             transform,
             visual: { kind: "box", material: "ground" },
-            collision: { kind: "box", dimensions, ...collisionMode },
+            collision: shape,
             ...surface,
             ...behaviors,
         };
@@ -245,7 +255,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             role,
             transform,
             visual,
-            collision: { kind: "box", dimensions, ...collisionMode },
+            collision: shape,
             ...surface,
             ...behaviors,
         };
@@ -254,7 +264,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         role,
         transform,
         visual: { kind: "box", material: "platform" },
-        collision: { kind: "box", dimensions, ...collisionMode },
+        collision: shape,
             ...surface,
             ...behaviors,
     };
@@ -263,7 +273,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
 /** Validate unknown JSON data and return a level with unique ids and supported object variants. */
 export function parseLevelDefinition(value: unknown): LevelDefinition {
     const input = record(value, "level");
-    exactKeys(input, "level", ["id", "spawnPosition", "failureBoundaryY", "objects"]);
+    exactKeys(input, "level", ["id", "spawnPosition", "failureBoundaryY", "objects", ...(Object.hasOwn(input, "sections") ? ["sections"] : [])]);
     const id = string(input.id, "level.id");
     if (!/^[a-z0-9][a-z0-9-]*$/.test(id))
         invalid("level.id", "must use lowercase letters, numbers, and hyphens");
@@ -293,7 +303,28 @@ export function parseLevelDefinition(value: unknown): LevelDefinition {
         if (object.role === "checkpoint" && object.transform.position[1] <= failureBoundaryY)
             invalid(`level.objects.${object.id}`, "checkpoint respawn position must be above the failure boundary");
     }
-    return { id, spawnPosition, failureBoundaryY, objects };
+    let sections: LevelSection[] | undefined;
+    if (Object.hasOwn(input, "sections")) {
+        if (!Array.isArray(input.sections) || input.sections.length === 0) invalid("level.sections", "expected a nonempty array");
+        const sectionIds = new Set<string>();
+        const checkpointIds = new Set<string>();
+        sections = input.sections.map((value, index) => {
+            const path = `level.sections[${index}]`;
+            const section = record(value, path);
+            exactKeys(section, path, ["id", "checkpointId", "instruction"]);
+            const sectionId = string(section.id, `${path}.id`);
+            if (!/^[a-z0-9][a-z0-9-]*$/.test(sectionId) || sectionIds.has(sectionId)) invalid(path, "invalid or duplicate section id");
+            sectionIds.add(sectionId);
+            const checkpointId = section.checkpointId === null ? null : string(section.checkpointId, `${path}.checkpointId`);
+            if (index === 0 ? checkpointId !== null : checkpointId === null) invalid(path, "only the starting section has a null checkpoint");
+            if (checkpointId !== null) {
+                if (checkpointIds.has(checkpointId) || !objects.some(object => object.id === checkpointId && object.role === "checkpoint")) invalid(path, "expected a unique checkpoint reference");
+                checkpointIds.add(checkpointId);
+            }
+            return { id: sectionId, checkpointId, instruction: string(section.instruction, `${path}.instruction`) };
+        });
+    }
+    return { id, spawnPosition, failureBoundaryY, objects, ...(sections ? { sections } : {}) };
 }
 
 /** Load `/levels/<id>.json`, validate it, and require its embedded id to match the filename. */
@@ -360,6 +391,7 @@ export function levelSurfaces(level: LevelDefinition): LevelSurface[] {
                 width: scale[0] * collisionDimensions[0],
                 height: scale[1] * collisionDimensions[1],
                 depth: scale[2] * collisionDimensions[2],
+                grade: object.collision.kind === "slope" ? object.collision.rise * scale[1] / (scale[0] * collisionDimensions[0]) : 0,
                 topY: position[1] + (scale[1] * collisionDimensions[1]) / 2,
             };
         });
@@ -402,4 +434,15 @@ export function overlappingLevelSurfaces(level: LevelDefinition): readonly (read
         }
     }
     return result;
+}
+
+export function surfaceHeightAt(surface: Pick<LevelSurface, "centerX" | "centerZ" | "rotationY" | "topY" | "grade">, x: number, z: number): number {
+    return surface.topY + surface.grade * (Math.cos(surface.rotationY) * (x - surface.centerX) - Math.sin(surface.rotationY) * (z - surface.centerZ));
+}
+
+export function slopePoints(dimensions: Vec3Tuple, rise: number): Float32Array {
+    const points: number[] = [];
+    for (const x of [-0.5, 0.5]) for (const y of [-0.5, 0.5]) for (const z of [-0.5, 0.5])
+        points.push(x * dimensions[0], y * dimensions[1] + x * rise, z * dimensions[2]);
+    return new Float32Array(points);
 }
