@@ -1,4 +1,4 @@
-import { PlatformCrumbleState, PlatformMotionState, PlatformPose } from "../src/game/platform-components";
+import { PlatformCrumbleState, PlatformMotionState, PlatformPose, PlatformVisualState } from "../src/game/platform-components";
 import { expect, test } from "bun:test";
 import { Body, createApp, Time, Transform, type World } from "@dylanebert/shallot";
 import { castRayClosest, emptyQueryHit } from "@dylanebert/shallot/standard/physics";
@@ -95,6 +95,12 @@ test("moving solid walls and undersides push stationary players without tunnelin
 test("moving ice crumble starts once, collapses during compression and keeps moving while absent", async () => {
     await scene([pad({ motion: movement([3, 0, 0]), crumble: { delay: 4 * dt, returnDelay: 0.1 }, surface: { profile: "ice" } })], (world, entities, tick, level) => {
         const entity = entities[0]!, eid = entity.collisionEid!;
+        const visual = world.storage(PlatformVisualState);
+        expect(visual.lowTraction.get(eid)).toBe(1);
+        expect(visual.moving.get(eid)).toBe(1);
+        expect(visual.crumbling.get(eid)).toBe(1);
+        expect(visual.returning.get(eid)).toBe(1);
+        expect(visual.damageStage.get(eid)).toBe(1);
         const saved = JSON.stringify(entity.object);
         const sim = createSim({ x: 0, y: 1.001, z: 0 }); sim.body.vel.y = -1;
         expect(tick(sim)).toBeDefined();
@@ -104,6 +110,8 @@ test("moving ice crumble starts once, collapses during compression and keeps mov
         expect(world.resource(surfaceDiagnostics).acceptedObjectId).toBeUndefined();
         for (let i = 0; i < 4; i++) tick(sim, { ...NEUTRAL_CONTROLS, compress: true });
         expect(world.storage(PlatformPose).available.get(eid)).toBe(0);
+        expect(visual.damageStage.get(eid)).toBe(10);
+        expect(visual.available.get(eid)).toBe(0);
         expect(world.storage(Body).isEnabled.get(eid)).toBe(0);
         expect(sim.pogo.state).toBe("Airborne");
         expect(sim.pogo.support).toBeUndefined();
@@ -118,6 +126,8 @@ test("moving ice crumble starts once, collapses during compression and keeps mov
         expect(world.storage(PlatformPose).available.get(eid)).toBe(1);
         expect(world.storage(Body).isEnabled.get(eid)).toBe(1);
         expect(world.storage(PlatformCrumbleState).phase.get(eid)).toBe(0);
+        expect(visual.damageStage.get(eid)).toBe(1);
+        expect(visual.available.get(eid)).toBe(1);
         expect(JSON.stringify(entity.object)).toBe(saved);
     });
 });

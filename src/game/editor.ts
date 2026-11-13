@@ -1186,6 +1186,11 @@ const EDITOR_STYLE = `
 #fpp2-editor .editor-level{color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 #fpp2-editor .editor-content{display:grid;gap:8px}#fpp2-editor[data-mode=play] .editor-content{display:none}
 #fpp2-editor .editor-section{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}
+#fpp2-editor details.editor-section{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}
+#fpp2-editor .editor-section>summary{display:flex;align-items:center;gap:5px;min-height:24px;color:#ddd;cursor:pointer;list-style:none;user-select:none}
+#fpp2-editor .editor-section>summary::-webkit-details-marker{display:none}
+#fpp2-editor .editor-section>summary::before{content:"▸";width:10px;color:#aaa}
+#fpp2-editor .editor-section[open]>summary::before{content:"▾"}
 #fpp2-editor .editor-title{grid-column:1/-1;color:#aaa}
 #fpp2-editor .editor-row{display:flex;gap:5px;align-items:center}#fpp2-editor .editor-row>label{flex:1;min-width:0}
 #fpp2-editor label{display:grid;gap:2px;color:#bbb}#fpp2-editor .editor-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
@@ -1393,7 +1398,10 @@ function renderProperties(world: World, root: HTMLElement): void {
             select.append(option);
         }
         select.value = object.surface?.profile ?? "default";
-        select.addEventListener("change", () => setSurfaceProperty(world, select.value === "directional" ? { profile: select.value, directionXZ: [1, 0] } : { profile: select.value }));
+        select.addEventListener("change", () => setSurfaceProperty(world, { profile: select.value as keyof typeof SURFACE_PROFILES,
+            ...(object.surface?.directionXZ ? { directionXZ: object.surface.directionXZ } : {}),
+            ...(object.surface?.overrides ? { overrides: object.surface.overrides } : {}),
+            ...(select.value === "directional" && !object.surface?.directionXZ ? { directionXZ: [1, 0] as const } : {}) }));
         label.append(select);
         panel.append(label);
         const authored = object.surface ?? { profile: "default" as const };
@@ -1413,7 +1421,7 @@ function renderProperties(world: World, root: HTMLElement): void {
             { key: "traction", label: "Traction (0–1)", maximum: 1 },
             { key: "contactDrag", label: "Contact drag (1/s)" },
             { key: "minimumDwell", label: "Minimum contact time (s)", maximum: 0.3 },
-            ...(authored.profile === "directional" ? [{ key: "directionalSpeed" as const, label: "Directional speed (m/s)" }] : []),
+            { key: "directionalSpeed" as const, label: "Directional speed (m/s)" },
             { key: "maximumVerticalSpeed", label: "Vertical speed limit (m/s, blank for none)" },
             { key: "chargeScale", label: "Charge multiplier (0–1)", maximum: 1 },
         ];
@@ -1446,7 +1454,7 @@ function renderProperties(world: World, root: HTMLElement): void {
                 if (value === preset[key] || (value === null && preset[key] === undefined)) delete overrides[key];
                 else if (key === "maximumVerticalSpeed") overrides.maximumVerticalSpeed = value;
                 else overrides[key] = value as number;
-                setSurfaceProperty(world, { ...authored, overrides });
+                setSurfaceProperty(world, { ...authored, ...(key === "directionalSpeed" && value !== null && Number(value) > 0 && !authored.directionXZ ? { directionXZ: [1, 0] as const } : {}), overrides });
             });
             field.append(input);
             panel.append(field);
@@ -1459,8 +1467,8 @@ function renderProperties(world: World, root: HTMLElement): void {
             setSurfaceProperty(world, presetSurface);
         });
         panel.append(reset);
-        if (object.surface?.profile === "directional") {
-            const direction = object.surface.directionXZ;
+        if (response.directionalSpeed > 0) {
+            const direction = object.surface?.directionXZ ?? [1, 0];
             for (const [axis, name] of ["X", "Z"].entries()) {
                 const field = document.createElement("label");
                 field.textContent = `Local direction ${name}`;
@@ -1569,29 +1577,29 @@ function mountEditorUi(world: World): HTMLElement {
       <header class="editor-header"><span data-mode-label></span><span class="editor-level" data-level-name></span><button data-action="toggle">Play</button></header>
       <div class="editor-content">
         <section class="editor-section" data-debug></section>
-        <section class="editor-section" data-panel="level">
-          <span class="editor-title">Level</span>
+        <details class="editor-section" data-panel="level" open>
+          <summary>Level</summary>
           <div class="editor-row"><select aria-label="Level" data-level-select></select><button data-action="load">Load</button></div>
           <div class="editor-row"><input aria-label="New level ID" data-new-id placeholder="New ID"><button data-action="new">New</button><button data-action="save">Save</button></div>
           <label>Fail below Y<input data-failure-boundary type="number" step="0.5"></label><div data-sections></div>
-        </section>
-        <section class="editor-section" data-panel="objects">
-          <span class="editor-title">Objects</span>
+        </details>
+        <details class="editor-section" data-panel="objects">
+          <summary>Objects</summary>
           <div class="editor-actions"><button data-action="create-platform">Add platform</button><button data-action="create-model">Add sample model</button><button data-action="open-model">Open GLB</button><button data-action="create-goal">Add goal</button><button data-action="create-checkpoint">Add checkpoint</button></div>
           <div class="editor-row"><select aria-label="Project model" data-model-select></select><button data-action="refresh-models">Refresh</button></div>
           <div class="editor-actions"><button data-action="add-project-model">Add selected model</button></div>
           <div class="editor-actions"><button data-action="duplicate">Duplicate</button><button data-action="delete">Delete</button></div>
           <div class="editor-actions"><button data-action="undo">Undo</button><button data-action="redo">Redo</button></div>
-        </section>
-        <section class="editor-section" data-panel="transform">
-          <span class="editor-title">Transform</span>
+        </details>
+        <details class="editor-section" data-panel="transform">
+          <summary>Transform</summary>
           <div class="editor-row"><label>Tool<select data-tool><option value="move">Move</option><option value="resize">Resize</option></select></label><label>Axis<select data-axis><option value="free">Free</option><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select></label></div>
           <div class="editor-row"><label>Snap<select data-snap></select></label><label>Speed<input data-speed type="number" min="0.1" step="0.5"></label></div>
-        </section>
-        <section class="editor-section" data-panel="properties">
-          <span class="editor-title">Properties</span>
+        </details>
+        <details class="editor-section" data-panel="properties">
+          <summary>Properties</summary>
           <div data-properties></div>
-        </section>
+        </details>
         <div class="editor-status" data-status></div>
       </div>`;
     for (const snap of SNAP_STEPS) {

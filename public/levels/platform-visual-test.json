@@ -1,0 +1,875 @@
+{
+  "id": "platform-visual-test",
+  "spawnPosition": [
+    -56,
+    3,
+    -32
+  ],
+  "failureBoundaryY": -14,
+  "objects": [
+    {
+      "id": "test-floor",
+      "role": "ground",
+      "transform": {
+        "position": [
+          0,
+          -1,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          160,
+          1,
+          120
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "ground"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "surface": {
+        "profile": "ice"
+      }
+    },
+    {
+      "id": "surface-default",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -56,
+          0.5,
+          -32
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "surface-elastic",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -38,
+          0.5,
+          -32
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "surface": {
+        "profile": "elastic"
+      }
+    },
+    {
+      "id": "surface-grip",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -20,
+          0.5,
+          -32
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "surface": {
+        "profile": "grip"
+      }
+    },
+    {
+      "id": "surface-ice",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -2,
+          0.5,
+          -32
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "surface": {
+        "profile": "ice"
+      }
+    },
+    {
+      "id": "surface-directional",
+      "role": "platform",
+      "transform": {
+        "position": [
+          16,
+          0.5,
+          -32
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "surface": {
+        "profile": "directional",
+        "directionXZ": [
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "id": "surface-ice-elastic",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -56,
+          0.5,
+          -12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          9,
+          0.6,
+          9
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ],
+        "mode": "one-way"
+      },
+      "surface": {
+        "profile": "ice",
+        "overrides": {
+          "bounceScale": 1.3,
+          "restitution": 0.6
+        }
+      }
+    },
+    {
+      "id": "surface-grip-ice",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -34,
+          0.5,
+          -12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          9,
+          0.6,
+          9
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ],
+        "mode": "solid"
+      },
+      "surface": {
+        "profile": "ice",
+        "overrides": {
+          "momentumRetention": 0.2,
+          "contactDrag": 3
+        }
+      }
+    },
+    {
+      "id": "surface-directional-elastic",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -12,
+          0.5,
+          -12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          9,
+          0.6,
+          9
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ],
+        "mode": "solid"
+      },
+      "surface": {
+        "profile": "elastic",
+        "directionXZ": [
+          1,
+          1
+        ],
+        "overrides": {
+          "directionalSpeed": 6
+        }
+      }
+    },
+    {
+      "id": "surface-hold-release",
+      "role": "platform",
+      "transform": {
+        "position": [
+          10,
+          0.5,
+          -12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          9,
+          0.6,
+          9
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ],
+        "mode": "solid"
+      },
+      "surface": {
+        "profile": "ice",
+        "overrides": {
+          "holdMode": "until-release",
+          "chargeScale": 0.6
+        }
+      }
+    },
+    {
+      "id": "surface-disabled-effects",
+      "role": "platform",
+      "transform": {
+        "position": [
+          32,
+          0.5,
+          -12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          9,
+          0.6,
+          9
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ],
+        "mode": "solid"
+      },
+      "surface": {
+        "profile": "elastic",
+        "overrides": {
+          "bounceScale": 1,
+          "restitution": 0,
+          "maximumVerticalSpeed": null
+        }
+      }
+    },
+    {
+      "id": "motion-loop-horizontal",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -42,
+          0.5,
+          12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "motion": {
+        "path": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            6
+          ]
+        ],
+        "duration": 6,
+        "phase": 0,
+        "mode": "loop"
+      }
+    },
+    {
+      "id": "motion-pingpong-vertical",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -20,
+          0.5,
+          12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "motion": {
+        "path": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            4,
+            0
+          ]
+        ],
+        "duration": 5,
+        "phase": 0.25,
+        "mode": "ping-pong"
+      }
+    },
+    {
+      "id": "motion-pingpong-horizontal",
+      "role": "platform",
+      "transform": {
+        "position": [
+          2,
+          0.5,
+          12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "surface": {
+        "profile": "ice",
+        "directionXZ": [
+          0,
+          1
+        ],
+        "overrides": {
+          "directionalSpeed": 4
+        }
+      },
+      "motion": {
+        "path": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            6,
+            0,
+            0
+          ]
+        ],
+        "duration": 4,
+        "phase": 0,
+        "mode": "ping-pong"
+      }
+    },
+    {
+      "id": "crumble-permanent",
+      "role": "platform",
+      "transform": {
+        "position": [
+          24,
+          0.5,
+          12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "crumble": {
+        "delay": 4
+      }
+    },
+    {
+      "id": "crumble-return",
+      "role": "platform",
+      "transform": {
+        "position": [
+          46,
+          0.5,
+          12
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          8,
+          0.6,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "crumble": {
+        "delay": 3,
+        "returnDelay": 5
+      }
+    },
+    {
+      "id": "slope-rotated",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -42,
+          0.5,
+          34
+        ],
+        "rotation": [
+          0,
+          0.25881904510252074,
+          0,
+          0.9659258262890683
+        ],
+        "scale": [
+          12,
+          0.8,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "slope",
+        "dimensions": [
+          1,
+          1,
+          1
+        ],
+        "rise": 0.45,
+        "mode": "one-way"
+      },
+      "surface": {
+        "profile": "elastic",
+        "directionXZ": [
+          0,
+          1
+        ],
+        "overrides": {
+          "directionalSpeed": 3
+        }
+      }
+    },
+    {
+      "id": "slope-solid",
+      "role": "platform",
+      "transform": {
+        "position": [
+          -20,
+          0.5,
+          34
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          12,
+          0.8,
+          8
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "platform"
+      },
+      "collision": {
+        "kind": "slope",
+        "dimensions": [
+          1,
+          1,
+          1
+        ],
+        "rise": 0.35
+      }
+    },
+    {
+      "id": "model-platform",
+      "role": "platform",
+      "transform": {
+        "position": [
+          2,
+          0.5,
+          34
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          10,
+          1,
+          10
+        ]
+      },
+      "visual": {
+        "kind": "gltf",
+        "asset": "sample-platform"
+      },
+      "collision": {
+        "kind": "box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      },
+      "surface": {
+        "profile": "elastic",
+        "directionXZ": [
+          1,
+          0
+        ],
+        "overrides": {
+          "traction": 0.2,
+          "directionalSpeed": 3,
+          "contactDrag": 1
+        }
+      },
+      "motion": {
+        "path": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            2
+          ]
+        ],
+        "duration": 7,
+        "phase": 0,
+        "mode": "ping-pong"
+      },
+      "crumble": {
+        "delay": 6,
+        "returnDelay": 8
+      }
+    },
+    {
+      "id": "goal",
+      "role": "goal",
+      "transform": {
+        "position": [
+          46,
+          2,
+          34
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          2,
+          3,
+          2
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "goal"
+      },
+      "collision": {
+        "kind": "trigger-box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "test",
+      "checkpointId": null,
+      "instruction": "Test platform surfaces, collision modes, motion, crumble, slopes, and imported models across the floor."
+    }
+  ]
+}

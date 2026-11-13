@@ -33,8 +33,7 @@ export type SurfaceOverrides = Partial<Omit<SurfaceResponse, "maximumVerticalSpe
     maximumVerticalSpeed?: number | null;
 };
 /** Level-authored profile and optional coefficient overrides. */
-export type AuthoredSurface = ({ profile: Exclude<SurfaceProfile, "directional"> } |
-    { profile: "directional"; directionXZ: readonly [number, number] }) & { overrides?: SurfaceOverrides };
+export type AuthoredSurface = { profile: SurfaceProfile; directionXZ?: readonly [number, number]; overrides?: SurfaceOverrides };
 export type SurfaceSnapshot = SurfaceResponse & { directionX: number; directionZ: number };
 
 /** Throw when a resolved surface coefficient is non-finite or outside its supported range. */
@@ -65,7 +64,7 @@ export function parseAuthoredSurface(value: unknown): AuthoredSurface {
     if (typeof input.profile !== "string" || !Object.hasOwn(SURFACE_PROFILES, input.profile))
         throw new Error("Unknown surface profile");
     const profile = input.profile as SurfaceProfile;
-    const keys = profile === "directional" ? ["profile", "directionXZ", "overrides"] : ["profile", "overrides"];
+    const keys = ["profile", "directionXZ", "overrides"];
     if (Object.keys(input).some(key => !keys.includes(key))) throw new Error("Unsupported surface field");
     let overrides: SurfaceOverrides | undefined;
     if (Object.hasOwn(input, "overrides")) {
@@ -86,16 +85,22 @@ export function parseAuthoredSurface(value: unknown): AuthoredSurface {
     const authoredOverrides = overrides && Object.keys(overrides).length ? { overrides } : {};
     const response = resolveSurfaceCoefficients(profile, overrides);
     validateSurfaceResponse(response);
-    if (profile !== "directional") {
-        if (response.directionalSpeed !== 0) throw new Error("Directional speed requires a directional profile");
-        return { profile, ...authoredOverrides };
-    }
     const d = input.directionXZ;
-    if (!Array.isArray(d) || d.length !== 2 || !d.every(n => typeof n === "number" && Number.isFinite(n)))
-        throw new Error("Expected finite local XZ direction");
-    const length = Math.hypot(d[0], d[1]);
-    if (!Number.isFinite(length) || length === 0) throw new Error("Surface direction must be nonzero");
-    return { profile, directionXZ: [d[0] / length, d[1] / length], ...authoredOverrides };
+    if (response.directionalSpeed > 0) {
+        if (!Array.isArray(d) || d.length !== 2 || !d.every(n => typeof n === "number" && Number.isFinite(n)))
+            throw new Error("Active directional launch requires a finite local XZ direction");
+        const length = Math.hypot(d[0], d[1]);
+        if (!Number.isFinite(length) || length === 0) throw new Error("Surface direction must be nonzero");
+        return { profile, directionXZ: [d[0] / length, d[1] / length], ...authoredOverrides };
+    }
+    if (d !== undefined) {
+        if (!Array.isArray(d) || d.length !== 2 || !d.every(n => typeof n === "number" && Number.isFinite(n)))
+            throw new Error("Expected finite local XZ direction");
+        const length = Math.hypot(d[0], d[1]);
+        if (!Number.isFinite(length) || length === 0) throw new Error("Surface direction must be nonzero");
+        return { profile, directionXZ: [d[0] / length, d[1] / length], ...authoredOverrides };
+    }
+    return { profile, ...authoredOverrides };
 }
 
 function resolveSurfaceCoefficients(profile: SurfaceProfile, overrides?: SurfaceOverrides): SurfaceResponse {
@@ -109,7 +114,7 @@ function resolveSurfaceCoefficients(profile: SurfaceProfile, overrides?: Surface
 /** Resolve profile coefficients and rotate directional launch input into world XZ axes. */
 export function resolveSurface(surface?: AuthoredSurface, rotationY = 0): SurfaceSnapshot {
     const response = resolveSurfaceCoefficients(surface?.profile ?? "default", surface?.overrides);
-    const [x, z] = surface?.profile === "directional" ? surface.directionXZ : [0, 0];
+    const [x, z] = surface?.directionXZ ?? [0, 0];
     return { ...response, directionX: Math.cos(rotationY) * x + Math.sin(rotationY) * z,
         directionZ: -Math.sin(rotationY) * x + Math.cos(rotationY) * z };
 }

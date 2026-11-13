@@ -1,4 +1,4 @@
-import { configurePlatform, platformPaths, PlatformPose, PlatformMotionState, PlatformCrumbleState } from "./platform-components";
+import { configurePlatform, platformPaths, PlatformPose, PlatformMotionState, PlatformCrumbleState, PlatformVisualState } from "./platform-components";
 import { resolveSurface, SURFACE_PROFILES, type SurfaceProfile } from "../surfaces";
 import {
     Body,
@@ -385,7 +385,7 @@ export function findLandingSurface(
 export const PogoWorldCollisionPlugin: Plugin = {
     name: "PogoWorldCollision",
     dependencies: [StandardPhysicsPlugin],
-    components: [LandingSurface, PlatformPose, PlatformMotionState, PlatformCrumbleState],
+    components: [LandingSurface, PlatformPose, PlatformMotionState, PlatformCrumbleState, PlatformVisualState],
     initialize(world) {
         // Static shapes provide queries; pogo movement remains owned by the game simulation.
         world.resource(PhysicsWorldDefinition).enableAutomaticStep = false;

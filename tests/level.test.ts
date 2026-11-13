@@ -28,6 +28,19 @@ test("external level files validate and keep object collision separate from visu
     expect(collisionSurface?.topY).toBeCloseTo(4.664);
 });
 
+test("platform visual test level includes every supported platform behavior", async () => {
+    const level = await readLevelFile("platform-visual-test");
+    const platforms = level.objects.filter(object => object.role === "platform");
+    expect(level.objects.find(object => object.id === "test-floor")?.transform.scale).toEqual([160, 1, 120]);
+    expect(platforms.length).toBeGreaterThanOrEqual(15);
+    expect(platforms.some(object => object.surface?.profile === "ice" && object.surface.overrides?.directionalSpeed === 4)).toBe(true);
+    expect(platforms.some(object => object.collision.kind === "slope" && object.collision.mode === "one-way")).toBe(true);
+    expect(platforms.some(object => object.motion?.mode === "loop")).toBe(true);
+    expect(platforms.some(object => object.motion?.path.some(point => point[1] !== 0))).toBe(true);
+    expect(platforms.some(object => object.crumble?.returnDelay !== undefined)).toBe(true);
+    expect(platforms.some(object => object.visual.kind === "gltf")).toBe(true);
+});
+
 test("level loader reports missing files and validates fetched contents", async () => {
     let requestedPath = "";
     const prototype = await readLevelFile("prototype");

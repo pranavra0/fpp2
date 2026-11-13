@@ -1,4 +1,4 @@
-import { configurePlatform, platformPaths, PlatformPose, PlatformMotionState, PlatformCrumbleState } from "./platform-components";
+import { configurePlatform, platformPaths, PlatformPose, PlatformMotionState, PlatformCrumbleState, updatePlatformVisualState } from "./platform-components";
 import { Body, Transform, type World } from "@dylanebert/shallot";
 import { setTransform, SyncPhysicsSystem } from "@dylanebert/shallot/standard/physics";
 import { advanceCrumble, contactCrumble, motionOffset, type CrumbleState, type CompiledPlatformMotion } from "../platforms";
@@ -31,6 +31,7 @@ function syncPlatform(world: World, entity: LevelEntity): boolean {
     setTransform(world, eid, [x, y, z], entity.object.transform.rotation);
     const changed = world.storage(Body).isEnabled.get(eid) !== available;
     if (changed) world.storage(Body).isEnabled.set(eid, available);
+    updatePlatformVisualState(world, eid);
     const origin = entity.object.transform.position;
     const transform = world.storage(Transform);
     for (const visual of entity.visualPlacements ?? []) {
@@ -109,6 +110,7 @@ function writeCrumble(world: World, eid: number, state: CrumbleState): void {
     storage.phase.set(eid, PHASES.indexOf(state.phase));
     storage.remaining.set(eid, state.remaining);
     world.storage(PlatformPose).available.set(eid, Number(state.phase !== "absent"));
+    updatePlatformVisualState(world, eid);
 }
 
 export function confirmPlatformContact(world: World, contact: LandingContact | undefined): void {

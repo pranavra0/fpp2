@@ -5,6 +5,7 @@ import { step } from "../src/game/simulation-step";
 import { DEFAULT_SURFACE, parseAuthoredSurface, parseSurfaceSnapshot, resolveSurface, SURFACE_PROFILES, validateSurfaceResponse, type SurfaceResponse, type SurfaceSnapshot } from "../src/surfaces";
 import { parseLevelDefinition } from "../src/content/level";
 import prototype from "../public/levels/prototype.json";
+import { crumbleDamageStage, surfaceVisualProperties } from "../src/game/platform-visuals";
 
 const snapshot = (response: SurfaceResponse): SurfaceSnapshot => ({ ...response, directionX: 0, directionZ: 0 });
 function tick(sim: Sim, response: SurfaceSnapshot, controls = NEUTRAL_CONTROLS) {
@@ -29,6 +30,26 @@ test("surface coefficient validation rejects invalid ranges, nonfinite and missi
         for (const value of values) expect(() => validateSurfaceResponse({ ...DEFAULT_SURFACE, [key]: value })).toThrow();
     expect(() => validateSurfaceResponse({} as SurfaceResponse)).toThrow();
     expect(() => validateSurfaceResponse({ ...DEFAULT_SURFACE, restitution: 1, momentumRetention: 0, minimumDwell: 0.3 })).not.toThrow();
+});
+
+test("directional launch composes with other profiles and visual cues follow resolved coefficients", () => {
+    const mixed = parseAuthoredSurface({ profile: "ice", directionXZ: [3, 4], overrides: { directionalSpeed: 6, bounceScale: 1.4 } });
+    expect(resolveSurface(mixed)).toMatchObject({ traction: 0.12, directionalSpeed: 6, directionX: 0.6, directionZ: 0.8, bounceScale: 1.4 });
+    expect(surfaceVisualProperties(resolveSurface(mixed))).toEqual({ lowTraction: true, rebound: true, grip: false, directionalLaunch: true, holdUntilRelease: true });
+    const disabled = parseAuthoredSurface({ profile: "elastic", overrides: { bounceScale: 1, restitution: 0 } });
+    expect(surfaceVisualProperties(resolveSurface(disabled)).rebound).toBe(false);
+    expect(() => parseAuthoredSurface({ profile: "grip", overrides: { directionalSpeed: 2 } })).toThrow();
+});
+
+test("crumble damage stages include ready, countdown boundaries, zero delay, and invalid timers", () => {
+    expect(crumbleDamageStage(4, 4, "ready")).toBe(1);
+    expect(crumbleDamageStage(4, 4, "counting")).toBe(1);
+    expect(crumbleDamageStage(4, 2, "counting")).toBe(5);
+    expect(crumbleDamageStage(4, 0, "counting")).toBe(10);
+    expect(crumbleDamageStage(0, 0, "counting")).toBe(10);
+    expect(crumbleDamageStage(1, 4, "absent")).toBe(10);
+    expect(() => crumbleDamageStage(1, 2, "counting")).toThrow();
+    expect(() => crumbleDamageStage(1, -1, "ready")).toThrow();
 });
 
 test("bounce strength and restitution produce independent height outcomes with fixed pole length", () => {
@@ -122,7 +143,7 @@ test("production level boundary preserves omission and validates profile and loc
         expect(parseLevelDefinition(JSON.parse(JSON.stringify(parsed)))).toEqual(parsed);
         if (surface.profile === "directional") expect((parsed.objects[0] as any).surface.directionXZ).toEqual([0.6, 0.8]);
     }
-    for (const surface of [{ profile: "unknown" }, { profile: "elastic", directionXZ: [1, 0] }, { profile: "directional" }, { profile: "directional", directionXZ: [0, 0] }, { profile: "directional", directionXZ: [Infinity, 0] }, { profile: "default", bounceScale: 2 }]) {
+    for (const surface of [{ profile: "unknown" }, { profile: "elastic", overrides: { directionalSpeed: 2 } }, { profile: "directional" }, { profile: "directional", directionXZ: [0, 0] }, { profile: "directional", directionXZ: [Infinity, 0] }, { profile: "default", bounceScale: 2 }]) {
         const raw = structuredClone(prototype) as any;
         raw.objects[0].surface = surface;
         expect(() => parseLevelDefinition(raw)).toThrow();
