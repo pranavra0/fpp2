@@ -1,6 +1,6 @@
 # Level files
 
-Level definitions are JSON files in `public/levels`. The game loads `first-level.json` by default. Add `?level=prototype` or `?level=alternate` to the development URL to load either sandbox. The query value must match the file name and the level `id`.
+Level definitions are JSON files in `public/levels`. The game loads `first-level.json` by default. Add `?level=prototype`, `?level=alternate`, or `?level=ice-slide-practice` to the development URL to load a sandbox. The query value must match the file name and the level `id`.
 
 Each level stores an `id`, a player `spawnPosition`, a `failureBoundaryY`, and an `objects` array. The boundary is a world-space Y value; falling below it respawns the player.
 
