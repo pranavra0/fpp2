@@ -164,3 +164,16 @@ test("reset restores level spawn and clears movement and presentation state", as
     expect(state.launchStretch).toBe(0);
     expect(state.launchFovPulse).toBe(0);
 });
+
+test("platform collision modes round trip and reject invalid modes and triggers", async () => {
+    const level = await readLevelFile("prototype");
+    const platform = level.objects.find(object => object.role === "platform")!;
+    const withMode = (mode: unknown, object = platform) => ({ ...level, objects: level.objects.map(entry => entry.id === object.id
+        ? { ...object, collision: { ...object.collision, mode } } : entry) });
+    for (const mode of ["solid", "one-way"]) {
+        const parsed = parseLevelDefinition(JSON.parse(JSON.stringify(withMode(mode))));
+        expect(parsed.objects.find(entry => entry.id === platform.id)?.collision).toMatchObject({ mode });
+    }
+    expect(() => parseLevelDefinition(withMode("invalid"))).toThrow("collision.mode");
+    expect(() => parseLevelDefinition(withMode("one-way", level.objects.find(entry => entry.role === "ground")!))).toThrow("collision.mode");
+});

@@ -55,6 +55,20 @@ export type LandingSweep = {
     currentTip: Vec3;
 };
 
+export type PlayerPose = { position: Vec3; tip: Vec3 };
+export type PlayerSweep = { previous: PlayerPose; current: PlayerPose };
+export type PlayerContact = { fraction: number; normal: Vec3 };
+export type PlayerQuery = (sweep: PlayerSweep) => PlayerContact | undefined;
+
+export function playerPose(sim: Sim): PlayerPose {
+    const length = sim.pole.length - sim.pogo.compressionM;
+    return { position: { ...sim.body.pos }, tip: {
+        x: sim.body.pos.x - sim.pole.d.x * length,
+        y: sim.body.pos.y - sim.pole.d.y * length,
+        z: sim.body.pos.z - sim.pole.d.z * length,
+    } };
+}
+
 export type LandingContact = { surfaceY: number; response?: SurfaceSnapshot };
 
 export type LandingQuery = (sweep: LandingSweep) => LandingContact | undefined;
@@ -293,7 +307,7 @@ function updateCompression(sim: Sim, tuning: Tuning, controls: Controls, dt: num
 }
 
 /* Fixed steps keep landings and charge timing independent of render cadence. */
-export function step(
+function integrateStep(
     sim: Sim,
     tuning: Tuning,
     controls: Controls,
@@ -392,4 +406,71 @@ export function step(
         sweep.previousTip.z + (sweep.currentTip.z - sweep.previousTip.z) * impactAlpha,
         contact.response ?? resolveSurface(),
     );
+}
+
+function removeInwardMotion(vector: Vec3, normal: Vec3): void {
+    const inward = vector.x * normal.x + vector.y * normal.y + vector.z * normal.z;
+    if (inward >= 0) return;
+    vector.x -= inward * normal.x;
+    vector.y -= inward * normal.y;
+    vector.z -= inward * normal.z;
+}
+
+export function step(
+    sim: Sim,
+    tuning: Tuning,
+    controls: Controls,
+    findLanding: LandingQuery,
+    findContact?: PlayerQuery,
+): void {
+    const previous = playerPose(sim);
+    const previousPogo = { ...sim.pogo };
+    integrateStep(sim, tuning, controls, findLanding);
+    if (!findContact) return;
+    let start = previous;
+    let target = playerPose(sim);
+    let blocked = false;
+    for (let iteration = 0; iteration < 6; iteration++) {
+        const contact = findContact({ previous: start, current: target });
+        if (!contact) {
+            Object.assign(sim.body.pos, target.position);
+            return;
+        }
+        assert(contact.fraction >= 0 && contact.fraction <= 1, "invalid player contact fraction");
+        assert(Math.abs(Math.hypot(contact.normal.x, contact.normal.y, contact.normal.z) - 1) < 1e-5, "invalid player contact normal");
+        const mix = (a: Vec3, b: Vec3): Vec3 => ({
+            x: a.x + (b.x - a.x) * contact.fraction,
+            y: a.y + (b.y - a.y) * contact.fraction,
+            z: a.z + (b.z - a.z) * contact.fraction,
+        });
+        const position = mix(start.position, target.position);
+        const tip = mix(start.tip, target.tip);
+        const remaining = { x: target.position.x - position.x, y: target.position.y - position.y, z: target.position.z - position.z };
+        removeInwardMotion(remaining, contact.normal);
+        removeInwardMotion(sim.body.vel, contact.normal);
+        if (!blocked) {
+            // Reject a later tip landing when a wall or ceiling was reached first.
+            if (sim.pogo.contactId !== previousPogo.contactId) Object.assign(sim.pogo, previousPogo);
+            const direction = { x: position.x - tip.x, y: position.y - tip.y, z: position.z - tip.z };
+            const supported = sim.pogo.state === "Compression" &&
+                Math.hypot(tip.x - sim.pogo.contactTip.x, tip.y - sim.pogo.contactTip.y, tip.z - sim.pogo.contactTip.z) < 1e-5;
+            sim.pole.length = Math.hypot(direction.x, direction.y, direction.z) + (supported ? sim.pogo.compressionM : 0);
+            normalizeVec3(direction);
+            Object.assign(sim.pole.d, direction);
+            sim.pole.leanZ = Math.asin(direction.z);
+            sim.pole.leanX = Math.atan2(direction.x, direction.y);
+            sim.pole.leanVelX = 0;
+            sim.pole.leanVelZ = 0;
+            if (!supported) {
+                sim.pogo.state = "Airborne";
+                sim.pogo.compressionM = 0;
+                sim.pogo.pendingLaunch = undefined;
+            }
+            blocked = true;
+        }
+        Object.assign(sim.body.pos, position);
+        start = playerPose(sim);
+        target = { position: { x: start.position.x + remaining.x, y: start.position.y + remaining.y, z: start.position.z + remaining.z },
+            tip: { x: start.tip.x + remaining.x, y: start.tip.y + remaining.y, z: start.tip.z + remaining.z } };
+    }
 }

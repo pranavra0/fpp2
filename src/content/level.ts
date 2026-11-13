@@ -18,21 +18,21 @@ export type LevelGroundObjectDefinition = LevelObjectBase & {
     role: "ground";
     surface?: AuthoredSurface;
     visual: { kind: "box"; material: "ground" };
-    collision: { kind: "box"; dimensions: Vec3Tuple };
+    collision: { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" };
 };
 
 export type LevelBoxPlatformObjectDefinition = LevelObjectBase & {
     role: "platform";
     surface?: AuthoredSurface;
     visual: { kind: "box"; material: "platform" };
-    collision: { kind: "box"; dimensions: Vec3Tuple };
+    collision: { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" };
 };
 
 export type LevelModelPlatformObjectDefinition = LevelObjectBase & {
     role: "platform";
     surface?: AuthoredSurface;
     visual: { kind: "gltf"; asset: LevelAssetId };
-    collision: { kind: "box"; dimensions: Vec3Tuple };
+    collision: { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" };
 };
 
 export type LevelSurfaceObjectDefinition =
@@ -156,13 +156,17 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         invalid(`${path}.visual.kind`, 'expected "box" or "gltf"');
     }
     const collisionInput = record(input.collision, `${path}.collision`);
-    exactKeys(collisionInput, `${path}.collision`, ["kind", "dimensions"]);
+    exactKeys(collisionInput, `${path}.collision`, ["kind", "dimensions", ...(Object.hasOwn(collisionInput, "mode") ? ["mode"] : [])]);
     const trigger = role === "goal" || role === "checkpoint";
     if (collisionInput.kind !== (trigger ? "trigger-box" : "box"))
         invalid(
             `${path}.collision.kind`,
             trigger ? 'expected "trigger-box" for non-solid gameplay objects' : 'expected "box" for solid surfaces',
         );
+    const mode = collisionInput.mode;
+    if (mode !== undefined && (role !== "platform" || (mode !== "solid" && mode !== "one-way")))
+        invalid(`${path}.collision.mode`, 'expected "solid" or "one-way" on a platform');
+    const collisionMode = mode === undefined ? {} : { mode: mode as "solid" | "one-way" };
     const dimensions = positiveTuple(collisionInput.dimensions, `${path}.collision.dimensions`);
     if (role === "goal" || role === "checkpoint") {
         if (visual.kind !== "box")
@@ -183,7 +187,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             role,
             transform,
             visual: { kind: "box", material: "ground" },
-            collision: { kind: "box", dimensions },
+            collision: { kind: "box", dimensions, ...collisionMode },
             ...surface,
         };
     }
@@ -193,7 +197,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             role,
             transform,
             visual,
-            collision: { kind: "box", dimensions },
+            collision: { kind: "box", dimensions, ...collisionMode },
             ...surface,
         };
     return {
@@ -201,7 +205,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         role,
         transform,
         visual: { kind: "box", material: "platform" },
-        collision: { kind: "box", dimensions },
+        collision: { kind: "box", dimensions, ...collisionMode },
             ...surface,
     };
 }

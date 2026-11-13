@@ -37,6 +37,8 @@ export const LandingSurface = component("LandingSurface", {
     centerZ: f32,
     rotationY: f32,
     topY: f32,
+    height: f32,
+    oneWay: f32,
     width: f32,
     depth: f32,
     edgeTolerance: f32,
@@ -107,6 +109,8 @@ function addSurface(
         centerZ: surface.centerZ,
         rotationY: surface.rotationY,
         topY: surface.topY,
+        height: surface.height,
+        oneWay: Number(object.collision.kind === "box" && object.collision.mode === "one-way"),
         width: surface.width,
         depth: surface.depth,
         edgeTolerance,
@@ -182,6 +186,8 @@ export function updateLevelEntity(
         world.storage(LandingSurface).centerZ.set(collisionEid, surface.centerZ);
         world.storage(LandingSurface).rotationY.set(collisionEid, surface.rotationY);
         world.storage(LandingSurface).topY.set(collisionEid, surface.topY);
+        world.storage(LandingSurface).height.set(collisionEid, surface.height);
+        world.storage(LandingSurface).oneWay.set(collisionEid, Number(object.collision.mode === "one-way"));
         world.storage(LandingSurface).width.set(collisionEid, surface.width);
         world.storage(LandingSurface).depth.set(collisionEid, surface.depth);
         world.storage(LandingSurface).edgeTolerance.set(collisionEid, edgeTolerance);

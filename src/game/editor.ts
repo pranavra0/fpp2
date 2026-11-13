@@ -36,6 +36,7 @@ import {
     addLevelObjectPhysics,
     destroyLevelEntities,
     updateLevelEntity,
+    surfaceDiagnostics,
     type LevelEntity,
 } from "./physics";
 import {
@@ -1395,6 +1396,7 @@ function initializeMoveAxisHandles(world: World, editor: EditorState): void {
 
 const EDITOR_STYLE = `
 #fpp2-editor{position:fixed;z-index:20;top:8px;left:8px;width:min(300px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;color:#ddd;background:#161616f2;font:12px/1.35 system-ui,sans-serif;pointer-events:none}
+#fpp2-editor[data-mode=play]{display:none}
 #fpp2-editor *{box-sizing:border-box}#fpp2-editor .editor-header,#fpp2-editor .editor-content{padding:8px;pointer-events:auto}
 #fpp2-editor .editor-header{display:flex;align-items:center;gap:8px}
 #fpp2-editor .editor-level{color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
@@ -1497,6 +1499,23 @@ function renderProperties(world: World, root: HTMLElement): void {
     if (!object) return;
     heading.textContent = `${object.id} · ${object.role}`;
     panel.append(heading);
+    if (object.role === "platform") {
+        const label = document.createElement("label");
+        label.textContent = "Collision";
+        const select = document.createElement("select");
+        select.dataset.collisionMode = "";
+        select.append(new Option("Solid", "solid"), new Option("One-way (land from above)", "one-way"));
+        select.value = object.collision.mode ?? "solid";
+        select.addEventListener("change", () => {
+            const level = activeLevel(world.resource(runtime));
+            const mode = select.value as "solid" | "one-way";
+            changedLevel(world, { ...level, objects: level.objects.map(entry => entry.id === object.id
+                ? { ...object, collision: { ...object.collision, mode } } : entry) }, cloneLevel(level));
+            refreshMountedUi(world);
+        });
+        label.append(select);
+        panel.append(label);
+    }
     if (object.role === "ground" || object.role === "platform") {
         const overlaps = overlappingLevelSurfaces(level).filter(pair => pair.includes(object.id));
         if (overlaps.length) {
@@ -1610,6 +1629,9 @@ function refreshUi(world: World, root: HTMLElement): void {
     const editor = world.resource(editorState);
     const level = activeLevel(world.resource(runtime));
     root.dataset.mode = editor.mode;
+    const sim = world.resource(runtime).sim;
+    root.querySelector<HTMLElement>("[data-debug]")!.textContent =
+        `${sim.pogo.state} | tick ${sim.tick} | speed ${Math.hypot(sim.body.vel.x, sim.body.vel.y, sim.body.vel.z).toFixed(2)} m/s | pole ${sim.pole.length.toFixed(2)} m | surface ${world.resource(surfaceDiagnostics).acceptedProfile ?? "none"}${sim.pogo.pendingLaunch ? " | release pending" : ""}`;
     root.querySelector<HTMLElement>("[data-mode-label]")!.textContent = editor.mode === "edit" ? "Edit" : "Play";
     button(root, "toggle").textContent = editor.mode === "edit" ? "Play" : "Edit";
     root.querySelector<HTMLElement>("[data-level-name]")!.textContent = level.id;
@@ -1661,6 +1683,7 @@ function mountEditorUi(world: World): HTMLElement {
     root.innerHTML = `<style>${EDITOR_STYLE}</style>
       <header class="editor-header"><span data-mode-label></span><span class="editor-level" data-level-name></span><button data-action="toggle">Play</button></header>
       <div class="editor-content">
+        <section class="editor-section" data-debug></section>
         <section class="editor-section" data-panel="level">
           <span class="editor-title">Level</span>
           <div class="editor-row"><select aria-label="Level" data-level-select></select><button data-action="load">Load</button></div>

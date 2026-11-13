@@ -128,3 +128,28 @@ test("editing a trigger updates its visible volume without adding physical colli
         app.dispose();
     }
 });
+
+test("editing collision mode persists and updates solid player contacts", async () => {
+    const { findPlayerContact } = await import("../src/game/player-collision");
+    const raw = await readFile(new URL("../public/levels/prototype.json", import.meta.url), "utf8");
+    const level = parseLevelDefinition(JSON.parse(raw));
+    const app = await createApp({ defaults: false, plugins: [PogoWorldCollisionPlugin] });
+    try {
+        const entities = addLevelPhysics(app.world, level);
+        app.world.step(Time.FIXED_DT);
+        const platform = entities.find(entity => entity.id === "platform-1")!;
+        if (platform.object.role !== "platform") throw new Error("Expected platform");
+        const sweep = {
+            previous: { position: { x: 3, y: 1.5, z: -2 }, tip: { x: 3, y: 0.5, z: -2 } },
+            current: { position: { x: 3, y: 3, z: -2 }, tip: { x: 3, y: 2, z: -2 } },
+        };
+        expect(findPlayerContact(app.world, sweep)).toBeDefined();
+        const changed = { ...platform.object, collision: { ...platform.object.collision, mode: "one-way" as const } };
+        const saved = parseLevelDefinition(JSON.parse(JSON.stringify({ ...level, objects: level.objects.map(object => object.id === platform.id ? changed : object) })));
+        updateLevelEntity(app.world, platform, saved.objects.find(object => object.id === platform.id)!);
+        expect(findPlayerContact(app.world, sweep)).toBeUndefined();
+        expect(findLandingSurface(app.world, { previousTip: { x: 3, y: 2.7, z: -2 }, currentTip: { x: 3, y: 2.5, z: -2 } })).toBeDefined();
+        updateLevelEntity(app.world, platform, { ...changed, collision: { ...changed.collision, mode: "solid" } });
+        expect(findPlayerContact(app.world, sweep)).toBeDefined();
+    } finally { app.dispose(); }
+});

@@ -3,6 +3,7 @@ import { StepPhysicsSystem } from "@dylanebert/shallot/standard/physics";
 import { DEFAULT_TUNING } from "../config/gameplay";
 import { simulationSubstepCount, step } from "../sim";
 import { findLandingSurface } from "./physics";
+import { findPlayerContact } from "./player-collision";
 import { updateLandingMarker, updateVisualFeedback, writePose } from "./presentation";
 import { editorState, isEditing } from "./editor-state";
 import { runtime } from "./state";
@@ -37,8 +38,9 @@ export const Simulate = {
             const incomingVerticalVelocity = state.sim.body.vel.y;
             const previousContactId = state.sim.pogo.contactId;
             const previousLaunchId = state.sim.pogo.lastLaunchedContactId;
-            step(state.sim, DEFAULT_TUNING, state.controls, (sweep) =>
-                findLandingSurface(world, sweep),
+            step(state.sim, DEFAULT_TUNING, state.controls,
+                sweep => findLandingSurface(world, sweep),
+                sweep => findPlayerContact(world, sweep),
             );
             const currentPosition = [
                 state.sim.body.pos.x,
