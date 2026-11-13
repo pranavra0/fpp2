@@ -178,7 +178,6 @@ function land(sim: Sim, topY: number, tipX: number, tipZ: number, response: Surf
     pogo.compressT = 0;
     pogo.chargeT = 0;
     pogo.compressionM = 0;
-    // Keeping a fixed tip point prevents the pogo from sliding during compression.
     setVec3(pogo.contactTip, tipX, topY, tipZ);
     // Horizontal momentum survives contact so the launch carries the incoming motion.
     pogo.carryVelX = body.vel.x * response.momentumRetention;
@@ -214,9 +213,9 @@ function launch(sim: Sim, tuning: Tuning): void {
     );
     const response = pogo.response;
     const powered = {
-        x: pole.d.x * speed * response.bounceScale,
+        x: pole.d.x * speed * response.bounceScale * response.traction,
         y: Math.max(baseVerticalSpeed + tuning.CHARGE_VERTICAL_BONUS_MPS * charge, pole.d.y * speed) * response.bounceScale,
-        z: pole.d.z * speed * response.bounceScale,
+        z: pole.d.z * speed * response.bounceScale * response.traction,
     };
     const reboundY = response.restitution * Math.min(pogo.incomingDownwardSpeed, response.impactSpeedLimit);
     const vertical = Math.max(powered.y, reboundY);
@@ -310,8 +309,8 @@ export function step(
         updatePole(sim, tuning, controls, tuning.LEAN_GROUND_RESPONSE, dt);
         const inputLength = Math.hypot(controls.leanX, controls.leanZ);
         const inputScale = inputLength > 1 ? 1 / inputLength : 1;
-        pogo.carryVelX += controls.leanX * inputScale * tuning.GROUND_CONTROL_MPS2 * dt;
-        pogo.carryVelZ += controls.leanZ * inputScale * tuning.GROUND_CONTROL_MPS2 * dt;
+        pogo.carryVelX += controls.leanX * inputScale * tuning.GROUND_CONTROL_MPS2 * pogo.response.traction * dt;
+        pogo.carryVelZ += controls.leanZ * inputScale * tuning.GROUND_CONTROL_MPS2 * pogo.response.traction * dt;
         if (pogo.response.contactDrag !== 0) {
             const before = Math.hypot(pogo.carryVelX, pogo.carryVelZ);
             const decay = Math.exp(-pogo.response.contactDrag * dt);
@@ -323,6 +322,25 @@ export function step(
         limitHorizontalSpeed(body.vel, tuning);
         pogo.carryVelX = body.vel.x;
         pogo.carryVelZ = body.vel.z;
+        if (pogo.response.traction < 1) {
+            const slip = (1 - pogo.response.traction) * dt;
+            pogo.contactTip.x += pogo.carryVelX * slip;
+            pogo.contactTip.z += pogo.carryVelZ * slip;
+            const tip = pogo.contactTip;
+            const tolerance = tuning.LANDING_VERTICAL_TOLERANCE_M;
+            const support = findLanding({
+                previousTip: { x: tip.x, y: tip.y + tolerance, z: tip.z },
+                currentTip: { x: tip.x, y: tip.y - tolerance, z: tip.z },
+            });
+            if (!support || Math.abs(support.surfaceY - tip.y) > tolerance) {
+                const length = pole.length - pogo.compressionM;
+                setVec3(body.pos, tip.x + pole.d.x * length, tip.y + pole.d.y * length, tip.z + pole.d.z * length);
+                pogo.state = "Airborne";
+                pogo.compressionM = 0;
+                pogo.pendingLaunch = undefined;
+                return;
+            }
+        }
         updateCompression(sim, tuning, controls, dt);
         return;
     }

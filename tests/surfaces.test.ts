@@ -24,7 +24,7 @@ function depart(sim: Sim, response: SurfaceSnapshot, controls = NEUTRAL_CONTROLS
 
 test("surface coefficient validation rejects invalid ranges, nonfinite and missing values", () => {
     for (const profile of Object.values(SURFACE_PROFILES)) expect(() => validateSurfaceResponse(profile)).not.toThrow();
-    for (const [key, values] of Object.entries({ bounceScale: [0, -1, NaN], restitution: [-1, 1.01, Infinity], impactSpeedLimit: [0], momentumRetention: [-0.01, 1.01], contactDrag: [-1], minimumDwell: [-1, 0.301], directionalSpeed: [-1], maximumVerticalSpeed: [0, -1, Infinity] }))
+    for (const [key, values] of Object.entries({ bounceScale: [0, -1, NaN], restitution: [-1, 1.01, Infinity], impactSpeedLimit: [0], momentumRetention: [-0.01, 1.01], contactDrag: [-1], traction: [-1, 1.01, NaN, Infinity], minimumDwell: [-1, 0.301], directionalSpeed: [-1], maximumVerticalSpeed: [0, -1, Infinity] }))
         for (const value of values) expect(() => validateSurfaceResponse({ ...DEFAULT_SURFACE, [key]: value })).toThrow();
     expect(() => validateSurfaceResponse({} as SurfaceResponse)).toThrow();
     expect(() => validateSurfaceResponse({ ...DEFAULT_SURFACE, restitution: 1, momentumRetention: 0, minimumDwell: 0.3 })).not.toThrow();
@@ -114,7 +114,7 @@ test("direction is applied once and complete horizontal velocity is limited", ()
 
 test("production level boundary preserves omission and validates profile and local direction", () => {
     expect(parseLevelDefinition(prototype)).toEqual(prototype);
-    for (const surface of [{ profile: "elastic" }, { profile: "grip" }, { profile: "default" }, { profile: "directional", directionXZ: [3, 4] }]) {
+    for (const surface of [{ profile: "ice" }, { profile: "elastic" }, { profile: "grip" }, { profile: "default" }, { profile: "directional", directionXZ: [3, 4] }]) {
         const raw = structuredClone(prototype) as any;
         raw.objects[0].surface = surface;
         const parsed = parseLevelDefinition(raw);
@@ -179,7 +179,7 @@ test("comparison environments use valid production profiles and retain ordinary 
     for (const name of ["surface-trials", "surface-comparison"]) {
         const level = parseLevelDefinition(await Bun.file(new URL(`../public/levels/${name}.json`, import.meta.url)).json());
         const profiles = level.objects.map(o => "surface" in o ? o.surface?.profile ?? "default" : "default");
-        expect(new Set(profiles)).toEqual(new Set(["default", "elastic", "grip", "directional"]));
+        expect(new Set(profiles)).toEqual(new Set(["default", "elastic", "grip", "directional", ...(name === "surface-trials" ? ["ice"] : [])]));
     }
 });
 
@@ -209,4 +209,40 @@ test("per-platform coefficient overrides round trip, inherit omitted values and 
         expect(() => parseAuthoredSurface({ profile: "default", overrides })).toThrow();
     const directional = parseAuthoredSurface({ profile: "directional", directionXZ: [3, 4], overrides: { directionalSpeed: 6, restitution: 0.2 } });
     expect(resolveSurface(directional)).toMatchObject({ directionalSpeed: 6, directionX: 0.6, directionZ: 0.8, restitution: 0.2 });
+});
+
+
+test("ice reduces ground steering and horizontal push-off while preserving momentum and bounce height", () => {
+    const normal = resolveSurface(), ice = resolveSurface({ profile: "ice" });
+    const controls = { ...NEUTRAL_CONTROLS, leanX: -1, leanZ: 0.5, compress: true };
+    const baseline = contact(normal), sliding = contact(ice);
+    for (let i = 0; i < 12; i++) {
+        tick(baseline, normal, controls);
+        tick(sliding, ice, controls);
+    }
+    expect(sliding.pogo.carryVelX - 10).toBeCloseTo((baseline.pogo.carryVelX - 10) * ice.traction);
+    expect(sliding.pogo.carryVelZ).toBeCloseTo(baseline.pogo.carryVelZ * ice.traction);
+    expect(sliding.pogo.contactTip.x).toBeGreaterThan(baseline.pogo.contactTip.x + 0.7);
+    depart(baseline, normal);
+    depart(sliding, ice);
+    expect(sliding.body.vel.y).toBeCloseTo(baseline.body.vel.y);
+    expect(sliding.pogo.diagnostics.powered.x).toBeCloseTo(baseline.pogo.diagnostics.powered.x * ice.traction);
+    expect(sliding.pogo.diagnostics.powered.z).toBeCloseTo(baseline.pogo.diagnostics.powered.z * ice.traction);
+    const neutral = depart(contact(ice), ice);
+    expect(neutral.body.vel.x).toBe(10);
+    expect(neutral.pogo.diagnostics.dragLoss).toBe(0);
+});
+
+test("sliding off an unsupported contact falls without a launch or a pending charge release", () => {
+    const ice = resolveSurface({ profile: "ice" });
+    const sim = contact(ice);
+    sim.pogo.pendingLaunch = "release";
+    const id = sim.pogo.lastLaunchedContactId;
+    step(sim, tuning, NEUTRAL_CONTROLS, () => undefined);
+    expect(sim.pogo.state).toBe("Airborne");
+    expect(sim.pogo.lastLaunchedContactId).toBe(id);
+    expect(sim.pogo.pendingLaunch).toBeUndefined();
+    expect(sim.body.vel).toEqual({ x: 10, y: 0, z: 0 });
+    step(sim, tuning, NEUTRAL_CONTROLS, () => undefined);
+    expect(sim.body.vel.y).toBeLessThan(0);
 });

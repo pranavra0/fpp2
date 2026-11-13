@@ -172,6 +172,8 @@ function updateSurfaceIndicators(world: World, entity: LevelEntity, object: Leve
             const wingAngle = angle + sign * Math.PI / 4;
             bar(headX - Math.cos(wingAngle) * size * 0.18, headZ + Math.sin(wingAngle) * size * 0.18, size * 0.5, wingAngle);
         }
+    } else if (object.surface.profile === "ice") {
+        for (const offset of [-0.2, 0.2]) bar(0, offset * size, size, Math.PI / 4);
     } else if (object.surface.profile === "grip") {
         for (const offset of [-0.3, 0, 0.3]) bar(0, offset * size, size, 0);
     } else {

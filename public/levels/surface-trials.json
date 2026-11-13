@@ -192,6 +192,43 @@
                     0
                 ]
             }
+        },
+        {
+            "id": "ice-pad",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    -12,
+                    -0.2,
+                    -8
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "surface": {
+                "profile": "ice"
+            }
         }
     ]
 }

@@ -4,6 +4,7 @@ export type SurfaceResponse = {
     impactSpeedLimit: number;
     momentumRetention: number;
     contactDrag: number;
+    traction: number;
     minimumDwell: number;
     directionalSpeed: number;
     maximumVerticalSpeed?: number;
@@ -11,12 +12,13 @@ export type SurfaceResponse = {
 
 export const DEFAULT_SURFACE: Readonly<SurfaceResponse> = Object.freeze({
     bounceScale: 1, restitution: 0, impactSpeedLimit: 18, momentumRetention: 1,
-    contactDrag: 0, minimumDwell: 0, directionalSpeed: 0,
+    contactDrag: 0, traction: 1, minimumDwell: 0, directionalSpeed: 0,
 });
 export const SURFACE_PROFILES = Object.freeze({
     default: DEFAULT_SURFACE,
     elastic: Object.freeze({ ...DEFAULT_SURFACE, bounceScale: 1.15, restitution: 0.85, maximumVerticalSpeed: 18 }),
     grip: Object.freeze({ ...DEFAULT_SURFACE, momentumRetention: 0.35, contactDrag: 4, minimumDwell: 0.08 }),
+    ice: Object.freeze({ ...DEFAULT_SURFACE, traction: 0.12 }),
     directional: Object.freeze({ ...DEFAULT_SURFACE, directionalSpeed: 4, maximumVerticalSpeed: 18 }),
 });
 export type SurfaceProfile = keyof typeof SURFACE_PROFILES;
@@ -39,7 +41,7 @@ export function validateSurfaceResponse(value: SurfaceResponse): void {
             throw new Error(`Invalid surface coefficient: ${key}`);
     }
     if (value.bounceScale <= 0 || value.impactSpeedLimit <= 0 || value.restitution > 1 ||
-        value.momentumRetention > 1 || value.minimumDwell > 0.3 ||
+        value.momentumRetention > 1 || value.traction > 1 || value.minimumDwell > 0.3 ||
         (value.maximumVerticalSpeed !== undefined && (!Number.isFinite(value.maximumVerticalSpeed) || value.maximumVerticalSpeed <= 0)))
         throw new Error("Surface coefficient outside admissible range");
 }

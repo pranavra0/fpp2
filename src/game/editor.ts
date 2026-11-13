@@ -1525,6 +1525,7 @@ function renderProperties(world: World, root: HTMLElement): void {
             { key: "restitution", label: "Impact rebound (0–1)", maximum: 1 },
             { key: "impactSpeedLimit", label: "Impact speed limit (m/s)" },
             { key: "momentumRetention", label: "Momentum retained (0–1)", maximum: 1 },
+            { key: "traction", label: "Traction (0–1)", maximum: 1 },
             { key: "contactDrag", label: "Contact drag (1/s)" },
             { key: "minimumDwell", label: "Minimum contact time (s)", maximum: 0.3 },
             ...(authored.profile === "directional" ? [{ key: "directionalSpeed" as const, label: "Directional speed (m/s)" }] : []),

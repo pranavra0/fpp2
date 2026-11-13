@@ -81,3 +81,32 @@ test("coefficient-only edits reach accepted contacts without changing an active 
         expect(findLandingSurface(world, sweep)?.response).toEqual(resolveSurface({ profile: "elastic" }));
     } finally { app.dispose(); }
 });
+
+
+test("ice authoring persists through level IO and collision edits, supports sliding and releases at the edge", async () => {
+    const object: LevelSurfaceObjectDefinition = { ...base, id: "ice-pad", surface: { profile: "ice" },
+        transform: { position: [0, -0.2, 0], rotation: [0, 0, 0, 1], scale: [4, 0.4, 4] } };
+    const level = parseLevelDefinition(JSON.parse(JSON.stringify({ ...parseLevelDefinition(prototype), objects: [object] })));
+    const app = await createApp({ defaults: false, plugins: [PogoWorldCollisionPlugin] });
+    try {
+        const world = app.world;
+        const [entity] = addLevelPhysics(world, level);
+        world.step(Time.FIXED_DT);
+        expect(findLandingSurface(world, sweep)?.response).toEqual(resolveSurface({ profile: "ice" }));
+        const sim = createSim({ x: 0, y: 1.001, z: 0 });
+        sim.body.vel = { x: 10, y: -1, z: 0 };
+        const tick = () => step(sim, DEFAULT_TUNING, { ...NEUTRAL_CONTROLS, compress: true }, path => findLandingSurface(world, path));
+        tick();
+        expect(sim.pogo.state).toBe("Compression");
+        const start = sim.pogo.contactTip.x;
+        for (let i = 0; i < 5; i++) tick();
+        expect(sim.pogo.state).toBe("Compression");
+        expect(sim.pogo.contactTip.x).toBeGreaterThan(start + 0.3);
+        for (let i = 0; i < 30 && sim.pogo.state === "Compression"; i++) tick();
+        expect(sim.pogo.state).toBe("Airborne");
+        expect(sim.body.vel.y).toBe(0);
+        expect(sim.pogo.lastLaunchedContactId).toBe(-1);
+        updateLevelEntity(world, entity!, { ...object, surface: { profile: "ice", overrides: { traction: 0.25 } } });
+        expect(findLandingSurface(world, sweep)?.response?.traction).toBe(0.25);
+    } finally { app.dispose(); }
+});
