@@ -1,3 +1,4 @@
+import { parseLevelAppearance, parseSurfaceAppearance, type LevelAppearance, type SurfaceAppearance } from "./appearance";
 import type { PlatformMotion, PlatformCrumble } from "../platforms.ts";
 import { parseAuthoredSurface, type AuthoredSurface } from "../surfaces.ts";
 /** Three world-space coordinates in meters. Level Y is up. */
@@ -13,6 +14,7 @@ export type SurfaceCollision = { kind: "box"; dimensions: Vec3Tuple; mode?: "sol
 
 type LevelObjectBase = {
     id: string;
+    appearance?: SurfaceAppearance;
     transform: {
         position: Vec3Tuple;
         rotation: QuaternionTuple;
@@ -66,6 +68,7 @@ export type LevelDefinition = {
     failureBoundaryY: number;
     objects: readonly LevelObjectDefinition[];
     sections?: readonly LevelSection[];
+    appearance?: LevelAppearance;
 };
 
 export type LevelSection = { id: string; checkpointId: string | null; instruction: string };
@@ -175,7 +178,7 @@ function parseCrumble(value: unknown, path: string): PlatformCrumble {
 
 function parseObject(value: unknown, path: string): LevelObjectDefinition {
     const input = record(value, path);
-    exactKeys(input, path, ["id", "role", "transform", "visual", "collision", ...["surface", "motion", "crumble"].filter(key => Object.hasOwn(input, key))]);
+    exactKeys(input, path, ["id", "role", "transform", "visual", "collision", ...["surface", "motion", "crumble", "appearance"].filter(key => Object.hasOwn(input, key))]);
     const id = string(input.id, `${path}.id`);
     const role = input.role;
     if (role !== "ground" && role !== "platform" && role !== "goal" && role !== "checkpoint")
@@ -189,6 +192,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         if (key === "motion") behaviors.motion = parseMotion(input.motion, `${path}.motion`);
         else behaviors.crumble = parseCrumble(input.crumble, `${path}.crumble`);
     }
+    const appearance = input.appearance === undefined ? {} : { appearance: parseSurfaceAppearance(input.appearance) };
     const transform = parseTransform(input.transform, `${path}.transform`);
     const visualInput = record(input.visual, `${path}.visual`);
     let visual: { kind: "box"; material: LevelMaterial } | { kind: "gltf"; asset: LevelAssetId };
@@ -232,6 +236,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             id,
             role,
             transform,
+            ...appearance,
             visual: { kind: "box", material: role },
             collision: { kind: "trigger-box", dimensions },
         };
@@ -243,6 +248,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             id,
             role,
             transform,
+            ...appearance,
             visual: { kind: "box", material: "ground" },
             collision: shape,
             ...surface,
@@ -254,6 +260,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             id,
             role,
             transform,
+            ...appearance,
             visual,
             collision: shape,
             ...surface,
@@ -263,6 +270,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         id,
         role,
         transform,
+        ...appearance,
         visual: { kind: "box", material: "platform" },
         collision: shape,
             ...surface,
@@ -273,7 +281,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
 /** Validate unknown JSON data and return a level with unique ids and supported object variants. */
 export function parseLevelDefinition(value: unknown): LevelDefinition {
     const input = record(value, "level");
-    exactKeys(input, "level", ["id", "spawnPosition", "failureBoundaryY", "objects", ...(Object.hasOwn(input, "sections") ? ["sections"] : [])]);
+    exactKeys(input, "level", ["id", "spawnPosition", "failureBoundaryY", "objects", ...["sections", "appearance"].filter(key => Object.hasOwn(input, key))]);
     const id = string(input.id, "level.id");
     if (!/^[a-z0-9][a-z0-9-]*$/.test(id))
         invalid("level.id", "must use lowercase letters, numbers, and hyphens");
@@ -324,7 +332,7 @@ export function parseLevelDefinition(value: unknown): LevelDefinition {
             return { id: sectionId, checkpointId, instruction: string(section.instruction, `${path}.instruction`) };
         });
     }
-    return { id, spawnPosition, failureBoundaryY, objects, ...(sections ? { sections } : {}) };
+    return { id, spawnPosition, failureBoundaryY, objects, ...(sections ? { sections } : {}), ...(input.appearance === undefined ? {} : { appearance: parseLevelAppearance(input.appearance) }) };
 }
 
 /** Load `/levels/<id>.json`, validate it, and require its embedded id to match the filename. */

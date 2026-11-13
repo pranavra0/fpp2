@@ -1,3 +1,4 @@
+import { DEFAULT_APPEARANCE, type SurfaceAppearance } from "../content/appearance";
 import { setLevelVisualMesh, flatMaterial } from "./visual-mesh";
 import { capturePlatformVisuals } from "./platforms";
 import {
@@ -134,6 +135,7 @@ function visualScale(object: LevelObjectDefinition): readonly [number, number, n
 function addBoxVisual(
     world: World,
     object: LevelObjectDefinition,
+    appearance: SurfaceAppearance,
 ): number {
     const eid = world.create();
     world.add(eid, Transform, {
@@ -142,7 +144,7 @@ function addBoxVisual(
         scale: visualScale(object),
     });
     world.add(eid, MeshInstance);
-    setLevelVisualMesh(world, eid, object);
+    setLevelVisualMesh(world, eid, object, appearance);
     world.add(eid, MeshMaterial, world.resource(flatMaterial));
     return eid;
 }
@@ -183,13 +185,14 @@ export function addLevelRendering(
     world: World,
     objects: readonly LevelEntity[],
     materials: Record<LevelMaterial, MaterialHandle>,
+    appearance: SurfaceAppearance = DEFAULT_APPEARANCE.surface,
 ): void {
     const cache = world.resource(levelAssetCache);
     for (const entity of objects) {
         const { object } = entity;
         updateSurfaceIndicators(world, entity, object, materials.goal);
         if (object.visual.kind === "box") {
-            entity.visualEids = [addBoxVisual(world, object)];
+            entity.visualEids = [addBoxVisual(world, object, appearance)];
             capturePlatformVisuals(world, entity);
             continue;
         }
@@ -215,11 +218,12 @@ export function updateLevelRendering(
     entity: LevelEntity,
     object: LevelObjectDefinition,
     indicatorMaterial: MaterialHandle,
+    appearance: SurfaceAppearance = DEFAULT_APPEARANCE.surface,
 ): void {
     updateSurfaceIndicators(world, entity, object, indicatorMaterial);
     if (object.visual.kind !== "gltf") {
         for (const eid of entity.visualEids ?? []) {
-            setLevelVisualMesh(world, eid, object);
+            setLevelVisualMesh(world, eid, object, appearance);
         }
         capturePlatformVisuals(world, entity);
         return;

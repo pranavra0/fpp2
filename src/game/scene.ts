@@ -143,7 +143,7 @@ export async function initializeGame(world: World): Promise<void> {
         platform: platformMaterial,
         goal: goalMaterial,
         checkpoint: checkpointMaterial,
-    });
+    }, levelDefinition.appearance?.surface);
     state.levelEntities = levelObjects;
     updateScenery(world, levelDefinition);
     state.levelMaterials = {

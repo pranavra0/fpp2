@@ -1,54 +1,55 @@
-import { Meshes, MeshInstance, MeshMaterial, Transform, type MeshHandle, type Resource, type World } from "@dylanebert/shallot";
+import { Camera, Resolution, MeshInstance, MeshMaterial, Transform, type Resource, type World } from "@dylanebert/shallot";
+import { DEFAULT_APPEARANCE, colorValue, type SceneryPlacement } from "../content/appearance";
 import type { LevelDefinition } from "../content/level";
-import { geometry, meshData, flatMaterial, quad } from "./visual-mesh";
+import { geometry, meshData, flatMaterial, quad, cuboid, type Geometry, type Point } from "./mesh-geometry";
+import { setOwnedMesh } from "./mesh-ownership";
 
-const scenery: Resource<{ entity?: number; mesh?: MeshHandle; key: string }> = { create: () => ({ key: "" }) };
+const scenery: Resource<Map<string, number>> = { create: () => new Map() };
+
+function polygon(mesh: Geometry, points: readonly Point[], color: number): void {
+    for (let i = 1; i < points.length - 1; i++) quad(mesh, [points[0]!, points[i]!, points[i + 1]!, points[i + 1]!], color);
+}
+export function sceneryMesh(item: SceneryPlacement) {
+    const mesh = geometry();
+    const light = colorValue(item.color), dark = colorValue(item.shade);
+    if (item.shape === "plane") {
+        quad(mesh, [[-.5,0,-.5],[.5,0,-.5],[.5,0,.5],[-.5,0,.5]], light);
+    } else if (item.shape === "ridge") {
+        polygon(mesh, [[-.5,0,0],[-.5,.3,0],[-.35,.48,0],[-.2,.42,0],[.02,1,0],[.2,.66,0],[.33,.72,0],[.5,.25,0],[.5,0,0]], light);
+        polygon(mesh, [[.02,1,.001],[.2,.66,.001],[.33,.72,.001],[.5,.25,.001],[.5,0,.001],[-.14,0,.001]], dark);
+    } else if (item.shape === "rock") {
+        polygon(mesh, [[-.5,0,.2],[-.4,.7,.1],[0,1,-.1],[.4,.75,0],[.5,0,.2]], light);
+        polygon(mesh, [[0,1,-.1],[.4,.75,0],[.5,0,.2],[.05,0,.3]], dark);
+    } else {
+        cuboid(mesh, [0,.27,0], [.035,.54,.035], [dark]);
+        // The folded crown has one light face and one shadow face, with no random detail.
+        const crown: Point[] = [[-.48,.42,0],[-.36,.72,0],[-.15,.82,0],[-.06,1,0],[.24,.88,0],[.46,.59,0],[.34,.37,0],[-.12,.32,0]];
+        polygon(mesh, crown, light);
+        polygon(mesh, [[-.06,1,.005],[.24,.88,.005],[.46,.59,.005],[.34,.37,.005],[-.12,.32,.005],[.08,.61,.005]], dark);
+    }
+    return meshData(item.id, mesh);
+}
 
 export function updateScenery(world: World, level: LevelDefinition): void {
-    const state = world.resource(scenery);
-    const bounds = level.objects.map(object => {
-        const [x,,z] = object.transform.position;
-        const radius = Math.hypot(object.transform.scale[0]*object.collision.dimensions[0], object.transform.scale[2]*object.collision.dimensions[2])/2;
-        const path = object.role === "platform" ? object.motion?.path ?? [[0,0,0]] : [[0,0,0]];
-        return { left: x-radius+Math.min(...path.map(p=>p[0]!)), right: x+radius+Math.max(...path.map(p=>p[0]!)),
-            back: z-radius+Math.min(...path.map(p=>p[2]!)), front: z+radius+Math.max(...path.map(p=>p[2]!)) };
-    });
-    const left = Math.min(...bounds.map(p => p.left)) - 24;
-    const right = Math.max(...bounds.map(p => p.right)) + 24;
-    const back = Math.min(...bounds.map(p => p.back)) - 24;
-    const front = Math.max(...bounds.map(p => p.front)) + 24;
-    const floor = level.failureBoundaryY - 2;
-    const key = [left,right,back,front,floor].join();
-    if(state.key === key) return;
-    state.key = key;
-    const mesh = geometry();
-    quad(mesh, [[left-150,floor,back-100],[right+150,floor,back-100],[right+150,floor,front+100],[left-150,floor,front+100]], 0x818d85);
-    for(let layer=0;layer<3;layer++) {
-        const z=back-18+layer*7, base=floor-1;
-        const colors=[0x929b89,0x7d8977,0x687a6e];
-        for(let i=0;i<12;i++) {
-            const x=left-60+i*18;
-            const height=7+Math.sin(i*1.7+layer)*4+layer*2;
-            quad(mesh, [[x,base,z],[x+18,base,z],[x+18,height+Math.sin((i+1)*1.7+layer)*3,z],[x,height,z]],colors[layer]!);
+    const appearance = level.appearance ?? DEFAULT_APPEARANCE;
+    const entities = world.resource(scenery);
+    const ids = new Set(appearance.scenery.map(item => item.id));
+    for (const [id, eid] of entities) if (!ids.has(id)) { world.destroy(eid); entities.delete(id); }
+    for (const item of appearance.scenery) {
+        let eid = entities.get(item.id);
+        if (eid === undefined) {
+            eid = world.create();
+            world.add(eid, Transform);
+            world.add(eid, MeshInstance);
+            world.add(eid, MeshMaterial, world.resource(flatMaterial));
+            entities.set(item.id, eid);
         }
+        world.add(eid, Transform, { translation: item.position, scale: item.scale, rotation: [0, Math.sin(item.yaw / 2), 0, Math.cos(item.yaw / 2)] });
+        setOwnedMesh(world, eid, JSON.stringify([item.shape, item.color, item.shade]), () => sceneryMesh(item));
     }
-    // Peripheral silhouettes remain beyond playable surfaces and cannot be mistaken for landing pads.
-    for (const side of [left,right]) for(let z=back+8;z<front;z+=12) {
-        const height=7+Math.sin(z*1.3)*2, x=side+Math.sin(z)*3;
-        quad(mesh, [[x-.14,floor,z],[x+.14,floor,z],[x+.14,height,z],[x-.14,height,z]],0x494f43);
-        for(let tier=0;tier<3;tier++) {
-            const y=height-tier*2, width=2.6+tier*.5;
-            quad(mesh, [[x-width,y-3,z],[x+width,y-3,z],[x+.2,y+1,z],[x-.2,y+1,z]],side === left ? 0x5a6c54 : 0x65745c);
-        }
+    for (const eid of world.query([Camera])) {
+        world.storage(Camera).clearColor.set(eid, colorValue(appearance.sky));
+        world.storage(Camera).antialias.set(eid, 0);
+        world.add(eid, Resolution, { height: appearance.resolution });
     }
-    const handle=world.resource(Meshes).add(meshData("level-scenery",mesh));
-    if(state.entity === undefined) {
-        state.entity=world.create();
-        world.add(state.entity,Transform);
-        world.add(state.entity,MeshInstance);
-        world.add(state.entity,MeshMaterial,world.resource(flatMaterial));
-    }
-    world.storage(MeshInstance).mesh.set(state.entity,handle);
-    if(state.mesh !== undefined) world.resource(Meshes).remove(state.mesh);
-    state.mesh=handle;
 }

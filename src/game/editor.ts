@@ -140,9 +140,9 @@ function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
     const nextEntities = level.objects.map((object) => {
         const existing = oldById.get(object.id);
         if (existing && sameEntityKinds(existing.object, object)) {
-            if (existing.object !== object) {
+            if (existing.object !== object || state.level?.appearance !== level.appearance) {
                 updateLevelEntity(world, existing, object);
-                updateLevelRendering(world, existing, object, editor.materials!.goal);
+                updateLevelRendering(world, existing, object, editor.materials!.goal, level.appearance?.surface);
             }
             return existing;
         }
@@ -155,7 +155,7 @@ function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
         const added = addLevelObjectPhysics(world, object);
         const materials = editor.materials;
         if (!materials) throw new Error("Editor level materials are unavailable");
-        addLevelRendering(world, [added], materials);
+        addLevelRendering(world, [added], materials, level.appearance?.surface);
         return added;
     });
 
@@ -370,6 +370,7 @@ function setMode(world: World, mode: "edit" | "play"): void {
         resetPlatforms(world, game.levelEntities, true);
         world.remove(game.camera, Camera);
         world.add(editor.camera, Camera, editor.editorCameraSettings);
+        updateScenery(world, activeLevel(game));
         requirePointerLock(world, false);
         releasePointerLock(world);
         hideGameplayVisuals(world);
@@ -387,6 +388,7 @@ function setMode(world: World, mode: "edit" | "play"): void {
     editor.mode = "play";
     world.remove(editor.camera, Camera);
     world.add(game.camera, Camera, editor.gameCameraSettings ?? editor.editorCameraSettings);
+    updateScenery(world, activeLevel(game));
     resetGameplayToSpawn(world);
     world.storage(Transform).scale.set(editor.spawnMarker, 0, 0, 0);
     world.storage(Transform).scale.set(editor.failureMarker, 0, 0, 0);

@@ -1,6 +1,10 @@
+import { DEFAULT_APPEARANCE, colorValue, type SurfaceAppearance } from "../content/appearance";
+import { geometry, quad, cuboid, meshData, type Point } from "./mesh-geometry";
+import { setOwnedMesh } from "./mesh-ownership";
+export { flatMaterial } from "./mesh-geometry";
 import { resolveSurface } from "../surfaces";
 import { surfaceVisualProperties } from "./platform-visuals";
-import { component, u32, Materials, Meshes, MeshInstance, StandardMaterial, type MeshHandle, type Resource, type World } from "@dylanebert/shallot";
+import { Meshes, type Resource, type World } from "@dylanebert/shallot";
 import type { LevelObjectDefinition } from "../content/level";
 
 export const PALETTE = {
@@ -9,40 +13,9 @@ export const PALETTE = {
     blue: 0x6d9398, ice: 0xa0b7b8,
 } as const;
 
-type Geometry = { vertices: number[]; indices: number[]; color: number[] };
-type Point = readonly [number, number, number];
-export function geometry(): Geometry { return { vertices: [], indices: [], color: [] }; }
-function rgba(hex: number): number[] {
-    return [16, 8, 0].map(shift => {
-        const value = ((hex >> shift) & 255) / 255;
-        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-    }).concat(1);
-}
-function shade(hex: number, factor: number): number {
-    return [16,8,0].reduce((result, shift) => result | (Math.min(255, Math.round(((hex >> shift) & 255) * factor)) << shift), 0);
-}
-export function quad(mesh: Geometry, points: readonly Point[], color: number): void {
-    const first = mesh.vertices.length / 8;
-    const c = rgba(color);
-    for (const p of points) { mesh.vertices.push(...p, 0, 0, 1, 0, 0); mesh.color.push(...c); }
-    mesh.indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
-}
-export function cuboid(mesh: Geometry, center: Point, size: Point, colors: readonly number[]): void {
-    const [x,y,z] = center, [w,h,d] = size.map(v => v / 2) as [number,number,number];
-    const p: Point[] = [[x-w,y-h,z-d],[x+w,y-h,z-d],[x+w,y+h,z-d],[x-w,y+h,z-d],
-        [x-w,y-h,z+d],[x+w,y-h,z+d],[x+w,y+h,z+d],[x-w,y+h,z+d]];
-    const faces = [[4,5,6,7],[1,0,3,2],[0,4,7,3],[5,1,2,6],[3,7,6,2],[0,1,5,4]];
-    faces.forEach((face,i) => quad(mesh, face.map(n => p[n]!), colors[i] ?? colors[0]!));
-}
-export function meshData(name: string, mesh: Geometry) {
-    return { name, vertices: new Float32Array(mesh.vertices), indices: new Uint32Array(mesh.indices), color: new Float32Array(mesh.color) };
-}
-export const flatMaterial = {
-    create: (world: World) => world.resource(Materials).add(StandardMaterial({ unlit: true, doubleSided: true }), { cullMode: "none" }),
-};
-
 // A single owned mesh keeps decoration attached through editing, motion and collapse.
-export function levelVisualMesh(object: LevelObjectDefinition) {
+export function levelVisualMesh(object: LevelObjectDefinition, appearance: SurfaceAppearance = DEFAULT_APPEARANCE.surface) {
+    const palette = Object.fromEntries(Object.entries(object.appearance ?? appearance).map(([key, value]) => [key, colorValue(value)])) as Record<keyof SurfaceAppearance, number>;
     const mesh = geometry();
     const trigger = object.collision.kind === "trigger-box";
     const dimensions = object.collision.dimensions;
@@ -61,32 +34,12 @@ export function levelVisualMesh(object: LevelObjectDefinition) {
     } else {
         const authored = "surface" in object ? object.surface : undefined;
         const cues = surfaceVisualProperties(resolveSurface(authored, 0));
-        const top = cues.lowTraction ? PALETTE.ice : cues.rebound ? PALETTE.red : cues.grip ? PALETTE.gold : cues.directionalLaunch ? PALETTE.blue : object.visual.kind === "box" && object.visual.material === "ground" ? PALETTE.grass : PALETTE.green;
-        box([0,0,0],[w,h,d],[PALETTE.edge,PALETTE.edge,PALETTE.shadow,PALETTE.edge,top,PALETTE.shadow]);
-        const edge = Math.min(0.10, h * 0.2);
+        const top = cues.lowTraction ? PALETTE.ice : cues.rebound ? PALETTE.red : cues.grip ? PALETTE.gold : cues.directionalLaunch ? PALETTE.blue : palette.top;
+        box([0,0,0],[w,h,d],[palette.side,palette.shadow,palette.shadow,palette.side,top,palette.shadow]);
+        const edge = Math.min(0.07, h * 0.15);
         const inset = Math.min(0.06, w * 0.08, d * 0.08);
-        for (const y of [h/2-edge/2, -h/2+edge/2]) {
-            box([0,y,0],[w+0.025,edge,d+0.025],[PALETTE.shadow]);
-        }
-        box([0,h/2+0.012,0],[w-2*inset,0.025,d-2*inset],[top]);
-        // World-sized patches preserve texture scale when the editor resizes a surface.
-        const columns = Math.min(32, Math.max(1, Math.ceil(w / .45)));
-        const rows = Math.min(32, Math.max(1, Math.ceil(d / .45)));
-        const cellW = (w-2*inset)/columns, cellD = (d-2*inset)/rows;
-        for(let x=0;x<columns;x++) for(let z=0;z<rows;z++) {
-            const noise = ((x*73856093) ^ (z*19349663)) >>> 0;
-            if(noise % 4 === 0) continue;
-            const cx = -w/2+inset+(x+.5)*cellW, cz = -d/2+inset+(z+.5)*cellD;
-            const color = shade(top, noise % 3 === 0 ? .86 : 1.06);
-            quad(mesh, [[cx-cellW*.501,h/2+.028,cz-cellD*.501],[cx+cellW*.501,h/2+.028,cz-cellD*.501],
-                [cx+cellW*.501,h/2+.028,cz+cellD*.501],[cx-cellW*.501,h/2+.028,cz+cellD*.501]], color);
-        }
-        for(let i=0;i<columns;i++) {
-            const x=-w/2+(i+.5)*w/columns;
-            const height = h*(.18+(i*7%5)*.06);
-            box([x,-h*.08,d/2+.008],[w/columns*.7,height,.016],[i%3 ? PALETTE.shadow : PALETTE.edge]);
-            box([x,h*.1,-d/2-.008],[w/columns*.6,height,.016],[PALETTE.shadow]);
-        }
+        box([0,h/2-edge/2,0],[w+0.012,edge,d+0.012],[palette.edge]);
+        box([0,h/2+0.003,0],[w-2*inset,0.006,d-2*inset],[top]);
         if (cues.lowTraction) {
             for(let i=0;i<3;i++) box([-w*0.22+i*w*0.22,h/2+0.031,0],[0.07,0.012,d*0.55],[PALETTE.cream]);
         } else if (object.role === "platform" && object.crumble) {
@@ -96,17 +49,6 @@ export function levelVisualMesh(object: LevelObjectDefinition) {
             const radius = Math.min(w,d)*.25;
             const point = (forward: number, side: number): Point => [dx*forward-dz*side,h/2+.04,dz*forward+dx*side];
             quad(mesh, [point(radius,0),point(-radius*.6,radius*.7),point(-radius*.25,0),point(-radius*.6,-radius*.7)], PALETTE.cream);
-        } else if (w > 2 && d > 2) {
-            for (const side of [-1,1]) for (let i=0;i<3;i++) box([side*(w/2-.35),h/2+.03,-d*.25+i*d*.25],[.12,.018,.35],[PALETTE.cream]);
-        }
-    }
-    if (!trigger && object.collision.kind !== "slope" && !(object.role === "platform" && (object.motion || object.crumble)) && w > 5 && d > 5) {
-        for (const side of [-1,1]) {
-            const x = side * (w/2 - 0.45), z = -d/2 + 0.45, y = h/2;
-            for(let i=0;i<3;i++) {
-                const dx = (i-1)*0.25, height = i === 1 ? 0.85 : 0.55;
-                quad(mesh, [[x,y,z],[x+dx-.16,y+height*.6,z],[x+dx,y+height,z],[x+dx+.16,y+height*.6,z]], i === 1 ? PALETTE.ink : PALETTE.green);
-            }
         }
     }
     // Slopes use the same surface cross-section while retaining their exact authored top plane.
@@ -144,6 +86,7 @@ const CHARACTER = [
 export const characterMeshes: Resource<number[]> = { create: () => [] };
 export function createCharacterMeshes(world: World): number[] {
     const meshes = world.resource(characterMeshes);
+    if (meshes.length) return meshes;
     for(const expression of [0,1,2]) {
         const mesh = geometry();
         CHARACTER.forEach((row,y) => [...row].forEach((pixel,x) => {
@@ -169,32 +112,6 @@ export function landingRingMesh() {
     return meshData("landing-ring",mesh);
 }
 
-const GeneratedLevelMesh = component("GeneratedLevelMesh", { handle: u32 });
-const generatedMeshOwnership: Resource<Map<number,string>> = {
-    create(world) {
-        const keys = new Map<number,string>();
-        const stop = world.observeMembership(GeneratedLevelMesh, (eid, present) => {
-            if (present) return;
-            world.resource(Meshes).remove(world.storage(GeneratedLevelMesh).handle.get(eid) as MeshHandle);
-            keys.delete(eid);
-        });
-        world.onDispose(stop);
-        return keys;
-    },
-};
-
-export function setLevelVisualMesh(world: World, eid: number, object: LevelObjectDefinition): void {
-    const keys = world.resource(generatedMeshOwnership);
-    const key = JSON.stringify([object.role, object.visual, object.transform.scale, object.collision,
-        "surface" in object ? object.surface : null, "crumble" in object ? object.crumble : null]);
-    if (keys.get(eid) === key) return;
-    if (world.has(eid, GeneratedLevelMesh)) world.remove(eid, GeneratedLevelMesh);
-    const mesh = world.resource(Meshes).add(levelVisualMesh(object));
-    world.add(eid, GeneratedLevelMesh, { handle: mesh });
-    world.storage(MeshInstance).mesh.set(eid, mesh);
-    keys.set(eid, key);
-}
-
 export function tongueMesh() {
     const mesh = geometry();
     cuboid(mesh,[0,0,0],[1.5,1,1],[PALETTE.red]);
@@ -204,4 +121,10 @@ export function tongueMesh() {
         cuboid(mesh,[.4,-.34+i*.15,.51],[.12,.035,.025],[0x8d5056]);
     }
     return meshData("player-tongue",mesh);
+}
+
+export function setLevelVisualMesh(world: World, eid: number, object: LevelObjectDefinition, appearance: SurfaceAppearance = DEFAULT_APPEARANCE.surface): void {
+    const key = JSON.stringify([object.role, object.visual, object.appearance ?? appearance, object.transform.scale, object.collision,
+        "surface" in object ? object.surface : null, "crumble" in object ? object.crumble : null]);
+    setOwnedMesh(world, eid, key, () => levelVisualMesh(object, appearance));
 }
