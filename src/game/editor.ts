@@ -61,10 +61,12 @@ const HIT = emptyQueryHit();
 
 type Axis = Exclude<TransformAxis, "free">;
 
+/** Keep a move-axis handle large enough to select and outside the object's projected extent. */
 export function moveAxisLength(screenSize: number, halfExtent: number): number {
     return Math.max(screenSize, halfExtent + screenSize * 0.4);
 }
 
+/** Compute the world-aligned half extents of a Y-rotated object. */
 export function moveAxisHalfExtents(
     scale: Vec3Tuple,
     rotation: QuaternionTuple,
@@ -1449,6 +1451,7 @@ function numericField(
     return field;
 }
 
+/** Validate and apply the selected ground or platform's authored surface response. */
 export function setSurfaceProperty(world: World, value: unknown): void {
     const object = selectedObject(world);
     if (!object || (object.role !== "ground" && object.role !== "platform")) return;
@@ -1464,6 +1467,7 @@ export function setSurfaceProperty(world: World, value: unknown): void {
     }
 }
 
+/** Validate and apply or remove motion or crumble behavior on the selected platform. */
 export function setPlatformBehavior(world: World, key: "motion" | "crumble", value: unknown): void {
     const object = selectedObject(world);
     if (object?.role !== "platform") return;
@@ -1891,6 +1895,7 @@ const EditorUi = {
     },
 };
 
+/** Create the development editor camera, markers, UI, and editor systems for a world. */
 export function initializeEditor(
     world: World,
     materials: Record<LevelMaterial, MaterialHandle>,

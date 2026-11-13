@@ -9,7 +9,7 @@
 - Simulation code must not import Shallot, rendering, input devices, camera, or UI. It may accept plain typed controls and collision results from engine integration. Keep collision queries and level geometry outside the simulation; keep movement and contact response pure.
 - Comments explain why only. Do not add TODO comments. Use assertions for invariants; do not clamp invalid state to hide it.
 - delete every tests except algorithmic logic, boundary IO, and integration flows
-
+- Dont worry about inspecting the browser yourself, the user will test manually 
 
 ## Shallot Specific notes
 Explore this project's entry, plugins and checks first; reuse its setup.

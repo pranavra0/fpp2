@@ -13,6 +13,7 @@ import { playGameAudio } from "./audio";
 import { activeLevel } from "./state";
 import { PLAYER_TRIGGER_CAPSULE, sweepCapsuleTriggers } from "./trigger-contact";
 
+/** Fixed gameplay simulation; runs after engine physics and before gameplay progression. */
 export const Simulate = {
     name: "PogoSimulation",
     group: "fixed" as const,
@@ -59,7 +60,7 @@ export const Simulate = {
                     PLAYER_TRIGGER_CAPSULE,
                 ),
             );
-            // Consume the buffered edge once so multiple substeps cannot start multiple charges.
+            // One input edge can start one charge even when an ECS step contains multiple simulation ticks.
             state.pendingJumpPress = false;
             if (state.sim.pogo.contactId !== previousContactId)
                 playGameAudio(world, "landing", Math.min(1, Math.max(0.35, -incomingVerticalVelocity / 12)));

@@ -4,13 +4,16 @@ import {
     PLAYER_TRIGGER_CAPSULE_HEIGHT_M,
 } from "../config/gameplay";
 
+/** First entry time for a trigger id along one simulation sweep. */
 export type TriggerContact = { id: string; fraction: number };
 
+/** Contacts and final overlap set produced by one movement step. */
 export type TriggerContactStep = {
     contacts: readonly TriggerContact[];
     insideTriggerIds: readonly string[];
 };
 
+/** Upright capsule dimensions in meters. */
 export type TriggerCapsule = { diameter: number; height: number };
 
 export const PLAYER_TRIGGER_CAPSULE: TriggerCapsule = {
@@ -47,6 +50,7 @@ function capsuleSegmentHalfLength(capsule: TriggerCapsule): number {
     return capsule.height * 0.5 - capsule.diameter * 0.5;
 }
 
+/** Test a capsule position against an authored trigger box. */
 export function capsuleOverlapsTrigger(
     trigger: LevelTriggerObjectDefinition,
     position: Vec3Tuple,
@@ -105,6 +109,7 @@ function entryInInterval(
     return Math.max(from, Math.min(to, root));
 }
 
+/** Find the first intersection fraction between a translated capsule and a trigger. */
 export function capsuleTriggerEntry(
     trigger: LevelTriggerObjectDefinition,
     start: Vec3Tuple,
@@ -143,6 +148,7 @@ export function capsuleTriggerEntry(
     return undefined;
 }
 
+/** Produce trigger entry times and end overlaps for a linearly swept upright capsule. */
 export function sweepCapsuleTriggers(
     level: LevelDefinition,
     start: Vec3Tuple,
@@ -161,6 +167,7 @@ export function sweepCapsuleTriggers(
     return { contacts, insideTriggerIds };
 }
 
+/** Return trigger ids containing the capsule at a single player position. */
 export function overlappingCapsuleTriggers(
     level: LevelDefinition,
     position: Vec3Tuple,

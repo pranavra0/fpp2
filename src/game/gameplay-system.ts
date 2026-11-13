@@ -59,6 +59,7 @@ function syncTriggerOverlaps(world: World): void {
     progress.pendingContactSteps.length = 0;
 }
 
+/** Restart at the level spawn or retain the active checkpoint, then reset platform and trigger state. */
 export function restartGameplay(world: World, fromStart: boolean): void {
     const state = world.resource(runtime);
     const level = activeLevel(state);
@@ -85,6 +86,7 @@ export function restartGameplay(world: World, fromStart: boolean): void {
     requirePointerLock(world, true);
 }
 
+/** Consume simulation trigger sweeps after `Simulate` and apply gameplay state transitions. */
 export const GameplayProgression = {
     name: "GameplayProgression",
     group: "fixed" as const,

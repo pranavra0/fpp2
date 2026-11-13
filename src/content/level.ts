@@ -1,7 +1,10 @@
 import type { PlatformMotion, PlatformCrumble } from "../platforms.ts";
 import { parseAuthoredSurface, type AuthoredSurface } from "../surfaces.ts";
+/** Three world-space coordinates in meters. Level Y is up. */
 export type Vec3Tuple = readonly [number, number, number];
+/** Unit quaternion in XYZW order; level objects rotate around Y only. */
 export type QuaternionTuple = readonly [number, number, number, number];
+/** Authored level object roles and their collision behavior. */
 export type LevelObjectRole = "ground" | "platform" | "goal" | "checkpoint";
 export type LevelMaterial = LevelObjectRole;
 export type LevelAssetId = string;
@@ -51,8 +54,10 @@ export type LevelTriggerObjectDefinition = LevelObjectBase & {
     collision: { kind: "trigger-box"; dimensions: Vec3Tuple };
 };
 
+/** Discriminated level object data; surface objects block or support, triggers do not block. */
 export type LevelObjectDefinition = LevelSurfaceObjectDefinition | LevelTriggerObjectDefinition;
 
+/** Parsed level data used by simulation, physics, rendering, and the editor. */
 export type LevelDefinition = {
     id: string;
     spawnPosition: Vec3Tuple;
@@ -255,6 +260,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
     };
 }
 
+/** Validate unknown JSON data and return a level with unique ids and supported object variants. */
 export function parseLevelDefinition(value: unknown): LevelDefinition {
     const input = record(value, "level");
     exactKeys(input, "level", ["id", "spawnPosition", "failureBoundaryY", "objects"]);
@@ -290,6 +296,7 @@ export function parseLevelDefinition(value: unknown): LevelDefinition {
     return { id, spawnPosition, failureBoundaryY, objects };
 }
 
+/** Load `/levels/<id>.json`, validate it, and require its embedded id to match the filename. */
 export async function loadLevel(
     id: string,
     readFile: typeof fetch = fetch,
@@ -334,6 +341,7 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+/** Derive world-space top-surface geometry from ground and platform collision dimensions. */
 export function levelSurfaces(level: LevelDefinition): LevelSurface[] {
     return level.objects
         .filter(
@@ -357,6 +365,7 @@ export function levelSurfaces(level: LevelDefinition): LevelSurface[] {
         });
 }
 
+/** Test whether a world-space XZ point lies within a rotated surface plus edge tolerance. */
 export function levelSurfaceContains(
     surface: Pick<LevelSurface, "centerX" | "centerZ" | "rotationY" | "width" | "depth">,
     x: number,
@@ -375,6 +384,7 @@ export function levelSurfaceContains(
     );
 }
 
+/** Return pairs of surface ids whose top planes overlap in the authored level. */
 export function overlappingLevelSurfaces(level: LevelDefinition): readonly (readonly [string, string])[] {
     const surfaces = levelSurfaces(level);
     const result: [string, string][] = [];

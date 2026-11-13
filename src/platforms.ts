@@ -1,14 +1,18 @@
 import type { Vec3 } from "./vec";
 
+/** Authored path and cycle used to move a platform in world space. Duration is in seconds. */
 export type PlatformMotion = {
     path: readonly (readonly [number, number, number])[];
     duration: number;
     phase: number;
     mode: "loop" | "ping-pong";
 };
+/** Delay before a contacted platform disappears; an optional return delay restores it. */
 export type PlatformCrumble = { delay: number; returnDelay?: number };
+/** Crumble lifecycle; `absent` platforms cannot support the player. */
 export type CrumbleState = { phase: "ready" | "counting" | "absent"; remaining: number };
 
+/** Evaluate a platform's path offset at elapsed cycle time. */
 export function motionOffset(motion: PlatformMotion, elapsed: number): Vec3 {
     if (!Number.isFinite(elapsed) || elapsed < 0) throw new Error("Invalid platform elapsed time");
     const period = motion.mode === "ping-pong" ? 2 : 1;
@@ -34,6 +38,7 @@ export function motionOffset(motion: PlatformMotion, elapsed: number): Vec3 {
     return { x: last[0], y: last[1], z: last[2] };
 }
 
+/** Advance crumble timing; occupied contact pauses the countdown and return timer. */
 export function advanceCrumble(state: CrumbleState, config: PlatformCrumble, dt: number, occupied: boolean): CrumbleState {
     if (!Number.isFinite(dt) || dt < 0) throw new Error("Invalid crumble timestep");
     if (state.phase === "ready" || (state.phase === "absent" && config.returnDelay === undefined)) return { ...state };
@@ -43,6 +48,7 @@ export function advanceCrumble(state: CrumbleState, config: PlatformCrumble, dt:
     return occupied ? { phase: "absent", remaining: 0 } : { phase: "ready", remaining: 0 };
 }
 
+/** Start a ready platform's crumble countdown when the player contacts it. */
 export function contactCrumble(state: CrumbleState, config: PlatformCrumble): CrumbleState {
     return state.phase === "ready" ? { phase: "counting", remaining: config.delay } : { ...state };
 }

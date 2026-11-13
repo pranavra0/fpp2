@@ -1,3 +1,4 @@
+/** Resolved contact coefficients applied to pogo charge, drag, rebound, and launch. */
 export type SurfaceResponse = {
     bounceScale: number;
     restitution: number;
@@ -12,6 +13,7 @@ export type SurfaceResponse = {
     maximumVerticalSpeed?: number;
 };
 
+/** `bounded` launches at full charge; `until-release` keeps the player compressed until release. */
 export type SurfaceHoldMode = "bounded" | "until-release";
 
 export const DEFAULT_SURFACE: Readonly<SurfaceResponse> = Object.freeze({
@@ -30,10 +32,12 @@ export type SurfaceProfile = keyof typeof SURFACE_PROFILES;
 export type SurfaceOverrides = Partial<Omit<SurfaceResponse, "maximumVerticalSpeed">> & {
     maximumVerticalSpeed?: number | null;
 };
+/** Level-authored profile and optional coefficient overrides. */
 export type AuthoredSurface = ({ profile: Exclude<SurfaceProfile, "directional"> } |
     { profile: "directional"; directionXZ: readonly [number, number] }) & { overrides?: SurfaceOverrides };
 export type SurfaceSnapshot = SurfaceResponse & { directionX: number; directionZ: number };
 
+/** Throw when a resolved surface coefficient is non-finite or outside its supported range. */
 export function validateSurfaceResponse(value: SurfaceResponse): void {
     const numeric = ["bounceScale", "restitution", "impactSpeedLimit", "momentumRetention", "contactDrag", "traction", "minimumDwell", "directionalSpeed", "chargeScale"] as const;
     const allowed = [...numeric, "holdMode", "maximumVerticalSpeed"] as const;
@@ -54,6 +58,7 @@ export function validateSurfaceResponse(value: SurfaceResponse): void {
         throw new Error("Surface coefficient outside admissible range");
 }
 
+/** Validate a surface profile and its optional response overrides from level JSON. */
 export function parseAuthoredSurface(value: unknown): AuthoredSurface {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected surface object");
     const input = value as Record<string, unknown>;
@@ -101,6 +106,7 @@ function resolveSurfaceCoefficients(profile: SurfaceProfile, overrides?: Surface
     return response;
 }
 
+/** Resolve profile coefficients and rotate directional launch input into world XZ axes. */
 export function resolveSurface(surface?: AuthoredSurface, rotationY = 0): SurfaceSnapshot {
     const response = resolveSurfaceCoefficients(surface?.profile ?? "default", surface?.overrides);
     const [x, z] = surface?.profile === "directional" ? surface.directionXZ : [0, 0];
@@ -108,6 +114,7 @@ export function resolveSurface(surface?: AuthoredSurface, rotationY = 0): Surfac
         directionZ: -Math.sin(rotationY) * x + Math.cos(rotationY) * z };
 }
 
+/** Validate a response snapshot crossing the physics and simulation boundary. */
 export function parseSurfaceSnapshot(value: unknown): SurfaceSnapshot {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected surface response snapshot");
     const { directionX, directionZ, ...coefficients } = value as SurfaceSnapshot;

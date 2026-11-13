@@ -3,6 +3,7 @@ import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import type { LevelDefinition, LevelMaterial } from "../content/level";
 import type { Vec3 } from "../vec";
 
+/** Editor state; `edit` pauses gameplay simulation and selects the editor camera. */
 export type EditorMode = "play" | "edit";
 export type TransformMode = "move" | "resize";
 export type TransformAxis = "free" | "x" | "y" | "z";
@@ -33,6 +34,7 @@ export type CameraSettings = {
     order: number;
 };
 
+/** Mutable authoring and camera state stored per Shallot world. */
 export type EditorState = {
     available: boolean;
     mode: EditorMode;
@@ -68,6 +70,7 @@ export type EditorState = {
     previousPointerY: number;
 };
 
+/** World resource for editor state; available only when development editor setup runs. */
 export const editorState: Resource<EditorState> = {
     create: () => ({
         available: false,
@@ -114,6 +117,7 @@ export const editorState: Resource<EditorState> = {
     }),
 };
 
+/** True only after editor setup has completed and edit mode is selected. */
 export function isEditing(state: EditorState): boolean {
     return state.available && state.mode === "edit";
 }

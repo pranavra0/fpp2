@@ -35,6 +35,7 @@ const surfaceFloat: FieldType<Float64Array> & { readonly lanes: 1 } = {
     ctor: Float64Array, lanes: 1, name: "f64",
 };
 
+/** Authored top-surface data consumed by pogo landing queries. */
 export const LandingSurface = component("LandingSurface", {
     centerX: f32,
     centerZ: f32,
@@ -80,6 +81,7 @@ function responseData(object: LevelObjectDefinition) {
         holdMode: HOLD_MODE_IDS[response.holdMode], maximumVerticalSpeed: response.maximumVerticalSpeed ?? 0 };
 }
 
+/** Links one authored level object to its engine collider and optional visual entities. */
 export type LevelEntity = {
     id: string;
     collisionEid?: number;
@@ -134,6 +136,7 @@ function addSurface(
     return eid;
 }
 
+/** Create collision entities for every surface and trigger in a parsed level. */
 export function addLevelPhysics(
     world: World,
     level: LevelDefinition,
@@ -142,6 +145,7 @@ export function addLevelPhysics(
     return level.objects.map((object) => addLevelObjectPhysics(world, object, tuning));
 }
 
+/** Create collision entities for one level object and return their authored-id mapping. */
 export function addLevelObjectPhysics(
     world: World,
     object: LevelObjectDefinition,
@@ -157,6 +161,7 @@ export function addLevelObjectPhysics(
     };
 }
 
+/** Destroy collision entities owned by the supplied level objects. */
 export function destroyLevelEntities(world: World, entities: LevelEntity[]): void {
     for (const entity of entities) {
         for (const visualEid of [...entity.visualEids ?? [], ...entity.indicatorEids ?? []]) world.destroy(visualEid);
@@ -169,6 +174,7 @@ export function destroyLevelEntities(world: World, entities: LevelEntity[]): voi
     entities.length = 0;
 }
 
+/** Apply edited authored data to an existing level object's collision entities. */
 export function updateLevelEntity(
     world: World,
     entity: LevelEntity,
@@ -254,6 +260,7 @@ function supportFootprintsMeet(first: Footprint, second: Footprint, tolerance: n
     return true;
 }
 
+/** Resolve the earliest supported surface crossing for a pogo-tip sweep. */
 export function findLandingSurface(
     world: World,
     sweep: LandingSweep,
@@ -362,6 +369,7 @@ export function findLandingSurface(
     return best;
 }
 
+/** Registers engine physics and the project's level collision integration. */
 export const PogoWorldCollisionPlugin: Plugin = {
     name: "PogoWorldCollision",
     dependencies: [StandardPhysicsPlugin],

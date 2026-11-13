@@ -6,6 +6,7 @@ import { activeLevel, runtime } from "./state";
 import { gameplayProgress } from "./gameplay-state";
 import { restartGameplay } from "./gameplay-system";
 
+/** Sample device input once per frame and retain a Space press until simulation consumes it. */
 export const ReadControls = {
     name: "PogoControls",
     group: "setup" as const,

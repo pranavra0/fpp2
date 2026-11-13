@@ -5,8 +5,11 @@ import type {
 } from "../content/level";
 import type { TriggerContactStep } from "./trigger-contact";
 
+/** Gameplay accepts movement and trigger events only while active. */
 export type GameplayMode = "active" | "complete";
+/** One-shot event emitted when a checkpoint, failure boundary, or goal is reached. */
 export type GameplayEvent = "checkpoint" | "failure" | "complete";
+/** Progress state owned by one loaded level. */
 export type GameplayProgress = {
     mode: GameplayMode;
     checkpointId: string | null;
@@ -17,6 +20,7 @@ export type GameplayProgress = {
     eventRemaining: number;
 };
 
+/** Initialize progress at the level spawn with no active checkpoint or trigger contacts. */
 export function createGameplayProgress(level: LevelDefinition): GameplayProgress {
     return {
         mode: "active",
@@ -29,6 +33,10 @@ export function createGameplayProgress(level: LevelDefinition): GameplayProgress
     };
 }
 
+/**
+ * Consume swept trigger contacts and update checkpoint, failure, or completion state.
+ * Failure is checked before trigger entries; completion stops further gameplay events.
+ */
 export function advanceGameplay(
     level: LevelDefinition,
     progress: GameplayProgress,
@@ -69,6 +77,7 @@ export function advanceGameplay(
     return activatedCheckpoint ? "checkpoint" : null;
 }
 
+/** Return goal and checkpoint definitions with non-solid trigger collision. */
 export function triggerObjects(level: LevelDefinition): LevelTriggerObjectDefinition[] {
     return level.objects.filter(
         (object): object is LevelTriggerObjectDefinition => object.collision.kind === "trigger-box",

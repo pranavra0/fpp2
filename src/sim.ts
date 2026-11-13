@@ -2,6 +2,7 @@ import { parseSurfaceSnapshot, resolveSurface, type SurfaceSnapshot } from "./su
 import { normalizeVec3, setVec3, type Vec3 } from "./vec";
 import { DEFAULT_TUNING, type Tuning } from "./config/gameplay";
 
+/** Input consumed by one fixed simulation step; steering is resolved into world X/Z axes. */
 export type Controls = {
     leanX: number;
     leanZ: number;
@@ -11,6 +12,7 @@ export type Controls = {
     retract: boolean;
 };
 
+/** Values recorded for the most recent landing and launch response. */
 export type SurfaceDiagnostics = {
     incoming: Vec3;
     retained: Vec3;
@@ -28,6 +30,7 @@ export type SurfaceDiagnostics = {
     source: "powered" | "impact";
 };
 
+/** Mutable player state owned by the fixed-step simulation. Positions and speeds use meters and seconds. */
 export type Sim = {
     tick: number;
     body: { pos: Vec3; vel: Vec3 };
@@ -51,6 +54,7 @@ export type Sim = {
     };
 };
 
+/** Tip trajectory submitted to the integration layer for a downward landing query. */
 export type LandingSweep = {
     previousTip: Vec3;
     currentTip: Vec3;
@@ -59,11 +63,16 @@ export type LandingSweep = {
     supportHandoff?: boolean;
 };
 
+/** Body and pogo-tip positions used by swept player collision. */
 export type PlayerPose = { position: Vec3; tip: Vec3 };
+/** Player trajectory passed to the integration layer between adjacent fixed steps. */
 export type PlayerSweep = { previous: PlayerPose; current: PlayerPose; startFraction?: number; supportPlatform?: number };
+/** Earliest solid contact along a player sweep; fraction is in the inclusive range [0, 1]. */
 export type PlayerContact = { fraction: number; normal: Vec3; displacement?: Vec3; velocity?: Vec3 };
+/** Returns the earliest player collision, or `undefined` when the sweep is clear. */
 export type PlayerQuery = (sweep: PlayerSweep) => PlayerContact | undefined;
 
+/** Derive the body and pogo-tip positions from the current pole length and compression. */
 export function playerPose(sim: Sim): PlayerPose {
     const length = sim.pole.length - sim.pogo.compressionM;
     return { position: { ...sim.body.pos }, tip: {
@@ -73,8 +82,11 @@ export function playerPose(sim: Sim): PlayerPose {
     } };
 }
 
+/** Platform-local anchor and motion state retained during pogo contact. */
 export type PlatformSupport = { platformId: number; position: Vec3; velocity: Vec3; anchor: Vec3 };
+/** Current support sample supplied before a simulation step. */
 export type SupportSnapshot = { platformId: number; position: Vec3; velocity: Vec3; available: boolean };
+/** Landing data returned by the integration layer. `fraction` locates contact along the sweep. */
 export type LandingContact = {
     surfaceY: number;
     response?: SurfaceSnapshot;
@@ -86,6 +98,7 @@ export type LandingContact = {
     supportHandoff?: boolean;
 };
 
+/** Returns the landing surface crossed by a tip sweep, or `undefined` when no landing occurs. */
 export type LandingQuery = (sweep: LandingSweep) => LandingContact | undefined;
 
 export const NEUTRAL_CONTROLS: Controls = {
@@ -97,6 +110,7 @@ export const NEUTRAL_CONTROLS: Controls = {
     retract: false,
 };
 
+/** Create an airborne player state at a world-space spawn position in meters. */
 export function createSim(spawn: Vec3 = { x: 0, y: 2, z: 0 }): Sim {
     return {
         tick: 0,
@@ -232,6 +246,7 @@ function land(sim: Sim, topY: number, tipX: number, tipZ: number, response: Surf
     body.vel.z += velocity.z;
 }
 
+/** Convert contact charge time in seconds into the surface-scaled launch charge. */
 export function effectiveCharge(chargeT: number, response: SurfaceSnapshot, tuning: Tuning = DEFAULT_TUNING): number {
     assert(Number.isFinite(tuning.CHARGE_MAX_S) && tuning.CHARGE_MAX_S > 0, "invalid charge capacity");
     assert(Number.isFinite(chargeT) && chargeT >= 0 && chargeT <= tuning.CHARGE_MAX_S, "invalid charge timer");
@@ -294,6 +309,7 @@ function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value));
 }
 
+/** Return the normalized downward crossing time, or `undefined` when the sweep misses the surface height. */
 export function landingAlpha(
     sweep: LandingSweep,
     surfaceY: number,
@@ -309,6 +325,7 @@ export function landingAlpha(
     return clamp01((sweep.previousTip.y - surfaceY) / -deltaY);
 }
 
+/** Return the integer number of simulation ticks; the ECS delta must contain whole simulation ticks. */
 export function simulationSubstepCount(
     fixedDeltaTime: number,
     tuning: Tuning = DEFAULT_TUNING,
@@ -540,6 +557,11 @@ function moveSupport(sim: Sim, snapshot: SupportSnapshot | undefined): void {
     support.velocity = { ...snapshot.velocity };
 }
 
+/**
+ * Advance one fixed tick, applying support motion, landing response, and optional body collision.
+ * The landing and body queries own all geometry access and must return contacts along the supplied sweeps.
+ * @returns A newly accepted landing or support handoff, if one occurred during this tick.
+ */
 export function step(
     sim: Sim,
     tuning: Tuning,

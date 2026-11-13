@@ -30,6 +30,7 @@ function recoverGameState(world: World) {
     };
 }
 
+/** Composes game plugins and schedules input, fixed gameplay, progression, and camera systems. */
 export const Game: Plugin = {
     name: "Game",
     recovery: recoverGameState,
