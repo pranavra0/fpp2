@@ -1,0 +1,197 @@
+{
+    "id": "surface-trials",
+    "spawnPosition": [
+        -12,
+        8,
+        0
+    ],
+    "failureBoundaryY": -12,
+    "objects": [
+        {
+            "id": "ground",
+            "role": "ground",
+            "transform": {
+                "position": [
+                    0,
+                    -4.5,
+                    0
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    40,
+                    1,
+                    28
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "ground"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            }
+        },
+        {
+            "id": "default-pad",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    -12,
+                    -0.2,
+                    0
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "surface": {
+                "profile": "default"
+            }
+        },
+        {
+            "id": "elastic-pad",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    -4,
+                    -0.2,
+                    0
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "surface": {
+                "profile": "elastic"
+            }
+        },
+        {
+            "id": "grip-pad",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    4,
+                    -0.2,
+                    0
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "surface": {
+                "profile": "grip"
+            }
+        },
+        {
+            "id": "directional-pad",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    12,
+                    -0.2,
+                    0
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "surface": {
+                "profile": "directional",
+                "directionXZ": [
+                    1,
+                    0
+                ]
+            }
+        }
+    ]
+}

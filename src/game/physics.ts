@@ -1,12 +1,15 @@
+import { resolveSurface, SURFACE_PROFILES, type SurfaceProfile } from "../surfaces";
 import {
     Body,
     component,
     f32,
+    type FieldType,
     Shape,
     Transform,
     UNIT_CUBE_ID,
     type Plugin,
     type World,
+    type Resource,
 } from "@dylanebert/shallot";
 import {
     castShape,
@@ -24,6 +27,11 @@ import {
 } from "../content/level";
 import { landingAlpha, type LandingContact, type LandingSweep } from "../sim";
 
+// Surface coefficients retain the authored precision through the collision boundary.
+const surfaceFloat: FieldType<Float64Array> & { readonly lanes: 1 } = {
+    ctor: Float64Array, lanes: 1, name: "f64",
+};
+
 export const LandingSurface = component("LandingSurface", {
     centerX: f32,
     centerZ: f32,
@@ -32,12 +40,36 @@ export const LandingSurface = component("LandingSurface", {
     width: f32,
     depth: f32,
     edgeTolerance: f32,
+    profile: f32,
+    bounceScale: surfaceFloat,
+    restitution: surfaceFloat,
+    impactSpeedLimit: surfaceFloat,
+    momentumRetention: surfaceFloat,
+    contactDrag: surfaceFloat,
+    minimumDwell: surfaceFloat,
+    directionalSpeed: surfaceFloat,
+    maximumVerticalSpeed: surfaceFloat,
+    directionX: f32,
+    directionZ: f32,
 });
+
+const PROFILE_IDS = Object.keys(SURFACE_PROFILES) as SurfaceProfile[];
+export const surfaceDiagnostics: Resource<{ ids: Map<number, string>; acceptedObjectId?: string; acceptedProfile?: SurfaceProfile; ambiguousObjectIds: string[] }> = {
+    create: () => ({ ids: new Map(), ambiguousObjectIds: [] }),
+};
+
+function responseData(object: LevelObjectDefinition) {
+    const authored = "surface" in object ? object.surface : undefined;
+    const rotationY = 2 * Math.atan2(object.transform.rotation[1], object.transform.rotation[3]);
+    const response = resolveSurface(authored, rotationY);
+    return { profile: PROFILE_IDS.indexOf(authored?.profile ?? "default"), ...response, maximumVerticalSpeed: response.maximumVerticalSpeed ?? 0 };
+}
 
 export type LevelEntity = {
     id: string;
     collisionEid?: number;
     visualEids?: number[];
+    indicatorEids?: number[];
     object: LevelObjectDefinition;
 };
 
@@ -77,7 +109,9 @@ function addSurface(
         width: surface.width,
         depth: surface.depth,
         edgeTolerance,
+        ...responseData(object),
     });
+    world.resource(surfaceDiagnostics).ids.set(eid, object.id);
     return eid;
 }
 
@@ -106,8 +140,11 @@ export function addLevelObjectPhysics(
 
 export function destroyLevelEntities(world: World, entities: LevelEntity[]): void {
     for (const entity of entities) {
-        for (const visualEid of entity.visualEids ?? []) world.destroy(visualEid);
-        if (entity.collisionEid !== undefined) world.destroy(entity.collisionEid);
+        for (const visualEid of [...entity.visualEids ?? [], ...entity.indicatorEids ?? []]) world.destroy(visualEid);
+        if (entity.collisionEid !== undefined) {
+            world.resource(surfaceDiagnostics).ids.delete(entity.collisionEid);
+            world.destroy(entity.collisionEid);
+        }
     }
     entities.length = 0;
 }
@@ -131,6 +168,9 @@ export function updateLevelEntity(
         if (entity.collisionEid === undefined)
             throw new Error(`Collision entity missing for surface "${entity.id}"`);
         const surface = levelSurface(object);
+        const response = responseData(object);
+        for (const key of Object.keys(response) as (keyof typeof response)[])
+            world.storage(LandingSurface)[key].set(entity.collisionEid, response[key]);
         const collisionEid = entity.collisionEid;
         world.storage(Transform).translation.set(collisionEid, ...object.transform.position);
         world.storage(Transform).rotation.set(collisionEid, ...object.transform.rotation);
@@ -188,14 +228,19 @@ export function findLandingSurface(
     );
     const surfaces = world.storage(LandingSurface);
     let bestAlpha = Number.POSITIVE_INFINITY;
-    let bestTopY: number | undefined;
+    let best: LandingContact | undefined;
+    let bestId: string | undefined;
+    let bestProfile: SurfaceProfile | undefined;
+    const diagnostics = world.resource(surfaceDiagnostics);
+    diagnostics.ambiguousObjectIds = [];
+    const candidates: { alpha: number; id: string; eid: number; topY: number }[] = [];
 
     castShape(world, sweep.previousTip, proxy, translation, (hit) => {
         if (!world.has(hit.body, LandingSurface)) return 1;
         const eid = hit.body;
         const topY = surfaces.topY.get(eid);
         const alpha = landingAlpha(sweep, topY, tuning);
-        if (alpha === undefined || alpha >= bestAlpha) return 1;
+        if (alpha === undefined) return 1;
         const x = sweep.previousTip.x + translation.x * alpha;
         const z = sweep.previousTip.z + translation.z * alpha;
         const surface: Pick<
@@ -217,12 +262,36 @@ export function findLandingSurface(
             )
         )
             return 1;
-        bestAlpha = alpha;
-        bestTopY = topY;
+        const id = diagnostics.ids.get(eid);
+        if (id === undefined) throw new Error("Landing surface has no authored identity");
+        candidates.push({ alpha, id, eid, topY });
         return 1;
     });
 
-    return bestTopY === undefined ? undefined : { surfaceY: bestTopY };
+    // Group against the actual earliest fraction so tolerance ties are independent of callback order.
+    const tieTolerance = 1e-6;
+    for (const candidate of candidates) bestAlpha = Math.min(bestAlpha, candidate.alpha);
+    const tied = candidates.filter(candidate => candidate.alpha <= bestAlpha + tieTolerance)
+        .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    if (tied.length > 1) diagnostics.ambiguousObjectIds = tied.map(candidate => candidate.id);
+    const selected = tied[0];
+    if (selected) {
+        bestId = selected.id;
+        bestProfile = PROFILE_IDS[surfaces.profile.get(selected.eid)]!;
+        best = { surfaceY: selected.topY, response: {
+            bounceScale: surfaces.bounceScale.get(selected.eid),
+            restitution: surfaces.restitution.get(selected.eid),
+            impactSpeedLimit: surfaces.impactSpeedLimit.get(selected.eid),
+            momentumRetention: surfaces.momentumRetention.get(selected.eid),
+            contactDrag: surfaces.contactDrag.get(selected.eid),
+            minimumDwell: surfaces.minimumDwell.get(selected.eid),
+            directionalSpeed: surfaces.directionalSpeed.get(selected.eid),
+            ...(surfaces.maximumVerticalSpeed.get(selected.eid) > 0 ? { maximumVerticalSpeed: surfaces.maximumVerticalSpeed.get(selected.eid) } : {}),
+            directionX: surfaces.directionX.get(selected.eid), directionZ: surfaces.directionZ.get(selected.eid) } };
+    }
+    diagnostics.acceptedObjectId = bestId;
+    diagnostics.acceptedProfile = bestProfile;
+    return best;
 }
 
 export const PogoWorldCollisionPlugin: Plugin = {

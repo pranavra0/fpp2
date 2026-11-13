@@ -1,3 +1,4 @@
+import { parseSurfaceSnapshot, resolveSurface, type SurfaceSnapshot } from "./surfaces";
 import { normalizeVec3, setVec3, type Vec3 } from "./vec";
 import { DEFAULT_TUNING, type Tuning } from "./config/gameplay";
 
@@ -8,6 +9,23 @@ export type Controls = {
     jumpPressed?: boolean;
     extend: boolean;
     retract: boolean;
+};
+
+export type SurfaceDiagnostics = {
+    incoming: Vec3;
+    retained: Vec3;
+    outgoing: Vec3;
+    dragLoss: number;
+    powered: Vec3;
+    reboundY: number;
+    impulse: Vec3;
+    horizontalSaturated: boolean;
+    verticalSaturated: boolean;
+    impactSaturated: boolean;
+    charge: number;
+    dwell: number;
+    reason: string;
+    source: "powered" | "impact";
 };
 
 export type Sim = {
@@ -25,6 +43,10 @@ export type Sim = {
         contactTip: Vec3;
         carryVelX: number;
         carryVelZ: number;
+        response: SurfaceSnapshot;
+        incomingDownwardSpeed: number;
+        pendingLaunch: "release" | "full-charge" | "automatic" | undefined;
+        diagnostics: SurfaceDiagnostics;
     };
 };
 
@@ -33,7 +55,7 @@ export type LandingSweep = {
     currentTip: Vec3;
 };
 
-export type LandingContact = { surfaceY: number };
+export type LandingContact = { surfaceY: number; response?: SurfaceSnapshot };
 
 export type LandingQuery = (sweep: LandingSweep) => LandingContact | undefined;
 
@@ -73,6 +95,16 @@ export function createSim(spawn: Vec3 = { x: 0, y: 2, z: 0 }): Sim {
             contactTip: { x: 0, y: 0, z: 0 },
             carryVelX: 0,
             carryVelZ: 0,
+            response: resolveSurface(),
+            incomingDownwardSpeed: 0,
+            pendingLaunch: undefined,
+            diagnostics: {
+                incoming: { x: 0, y: 0, z: 0 }, retained: { x: 0, y: 0, z: 0 },
+                outgoing: { x: 0, y: 0, z: 0 }, powered: { x: 0, y: 0, z: 0 },
+                impulse: { x: 0, y: 0, z: 0 }, dragLoss: 0, reboundY: 0,
+                horizontalSaturated: false, verticalSaturated: false, impactSaturated: false,
+                charge: 0, dwell: 0, reason: "", source: "powered",
+            },
         },
     };
 }
@@ -133,8 +165,14 @@ function limitHorizontalSpeed(velocity: Vec3, tuning: Tuning): void {
     velocity.z *= scale;
 }
 
-function land(sim: Sim, topY: number, tipX: number, tipZ: number): void {
+function land(sim: Sim, topY: number, tipX: number, tipZ: number, response: SurfaceSnapshot): void {
     const { body, pole, pogo } = sim;
+    assert(Object.values(body.vel).every(Number.isFinite), "nonfinite incoming velocity");
+    pogo.response = parseSurfaceSnapshot(response);
+    pogo.incomingDownwardSpeed = Math.max(0, -body.vel.y);
+    pogo.pendingLaunch = undefined;
+    pogo.diagnostics.incoming = { ...body.vel };
+    pogo.diagnostics.dragLoss = 0;
     pogo.contactId++;
     pogo.state = "Compression";
     pogo.compressT = 0;
@@ -143,8 +181,9 @@ function land(sim: Sim, topY: number, tipX: number, tipZ: number): void {
     // Keeping a fixed tip point prevents the pogo from sliding during compression.
     setVec3(pogo.contactTip, tipX, topY, tipZ);
     // Horizontal momentum survives contact so the launch carries the incoming motion.
-    pogo.carryVelX = body.vel.x;
-    pogo.carryVelZ = body.vel.z;
+    pogo.carryVelX = body.vel.x * response.momentumRetention;
+    pogo.carryVelZ = body.vel.z * response.momentumRetention;
+    pogo.diagnostics.retained = { x: pogo.carryVelX, y: 0, z: pogo.carryVelZ };
     setVec3(
         body.pos,
         tipX + pole.d.x * pole.length,
@@ -173,16 +212,26 @@ function launch(sim: Sim, tuning: Tuning): void {
         pogo.contactTip.y + pole.d.y * pole.length,
         pogo.contactTip.z + pole.d.z * pole.length,
     );
-    setVec3(
-        body.vel,
-        pogo.carryVelX + pole.d.x * speed,
-        Math.max(
-            baseVerticalSpeed + tuning.CHARGE_VERTICAL_BONUS_MPS * charge,
-            pole.d.y * speed,
-        ),
-        pogo.carryVelZ + pole.d.z * speed,
-    );
+    const response = pogo.response;
+    const powered = {
+        x: pole.d.x * speed * response.bounceScale,
+        y: Math.max(baseVerticalSpeed + tuning.CHARGE_VERTICAL_BONUS_MPS * charge, pole.d.y * speed) * response.bounceScale,
+        z: pole.d.z * speed * response.bounceScale,
+    };
+    const reboundY = response.restitution * Math.min(pogo.incomingDownwardSpeed, response.impactSpeedLimit);
+    const vertical = Math.max(powered.y, reboundY);
+    const impulse = { x: response.directionalSpeed * response.directionX, y: 0, z: response.directionalSpeed * response.directionZ };
+    setVec3(body.vel, pogo.carryVelX + powered.x + impulse.x,
+        response.maximumVerticalSpeed === undefined ? vertical : Math.min(vertical, response.maximumVerticalSpeed),
+        pogo.carryVelZ + powered.z + impulse.z);
+    Object.assign(pogo.diagnostics, { powered, reboundY, impulse,
+        horizontalSaturated: Math.hypot(body.vel.x, body.vel.z) > tuning.MAX_HORIZONTAL_SPEED_MPS,
+        verticalSaturated: body.vel.y < vertical,
+        impactSaturated: response.restitution > 0 && pogo.incomingDownwardSpeed > response.impactSpeedLimit,
+        charge, dwell: pogo.compressT, reason: pogo.pendingLaunch ?? "", source: reboundY > powered.y ? "impact" : "powered" });
+    pogo.pendingLaunch = undefined;
     limitHorizontalSpeed(body.vel, tuning);
+    pogo.diagnostics.outgoing = { ...body.vel };
 }
 
 function clamp01(value: number): number {
@@ -234,13 +283,14 @@ function updateCompression(sim: Sim, tuning: Tuning, controls: Controls, dt: num
         pogo.contactTip.z + sim.pole.d.z * compressedLength,
     );
 
-    if (pogo.chargeT >= tuning.CHARGE_MAX_S) {
-        launch(sim, tuning);
-        return;
+    if (pogo.pendingLaunch === undefined) {
+        if (pogo.chargeT >= tuning.CHARGE_MAX_S) pogo.pendingLaunch = "full-charge";
+        else if (!controls.compress && pogo.jumpBufferT <= 0) {
+            if (pogo.chargeT > 0) pogo.pendingLaunch = "release";
+            else if (pogo.compressT >= tuning.AUTO_BOUNCE_DELAY_S) pogo.pendingLaunch = "automatic";
+        }
     }
-    if (controls.compress || pogo.jumpBufferT > 0) return;
-    // A short contact window permits a deliberate charge without leaving an idle pogo stuck.
-    if (pogo.chargeT > 0 || pogo.compressT >= tuning.AUTO_BOUNCE_DELAY_S) launch(sim, tuning);
+    if (pogo.pendingLaunch !== undefined && pogo.compressT >= pogo.response.minimumDwell) launch(sim, tuning);
 }
 
 /* Fixed steps keep landings and charge timing independent of render cadence. */
@@ -262,6 +312,13 @@ export function step(
         const inputScale = inputLength > 1 ? 1 / inputLength : 1;
         pogo.carryVelX += controls.leanX * inputScale * tuning.GROUND_CONTROL_MPS2 * dt;
         pogo.carryVelZ += controls.leanZ * inputScale * tuning.GROUND_CONTROL_MPS2 * dt;
+        if (pogo.response.contactDrag !== 0) {
+            const before = Math.hypot(pogo.carryVelX, pogo.carryVelZ);
+            const decay = Math.exp(-pogo.response.contactDrag * dt);
+            pogo.carryVelX *= decay;
+            pogo.carryVelZ *= decay;
+            pogo.diagnostics.dragLoss += before - Math.hypot(pogo.carryVelX, pogo.carryVelZ);
+        }
         setVec3(body.vel, pogo.carryVelX, 0, pogo.carryVelZ);
         limitHorizontalSpeed(body.vel, tuning);
         pogo.carryVelX = body.vel.x;
@@ -315,5 +372,6 @@ export function step(
         contact.surfaceY,
         sweep.previousTip.x + (sweep.currentTip.x - sweep.previousTip.x) * impactAlpha,
         sweep.previousTip.z + (sweep.currentTip.z - sweep.previousTip.z) * impactAlpha,
+        contact.response ?? resolveSurface(),
     );
 }

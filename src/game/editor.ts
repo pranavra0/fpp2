@@ -1,3 +1,4 @@
+import { parseAuthoredSurface, resolveSurface, SURFACE_PROFILES, type SurfaceOverrides, type SurfaceResponse } from "../surfaces";
 import {
     Camera,
     Devices,
@@ -21,6 +22,7 @@ import { castRayClosest, emptyQueryHit } from "@dylanebert/shallot/standard/phys
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import {
     loadLevel,
+    overlappingLevelSurfaces,
     parseLevelDefinition,
     type LevelAssetId,
     type LevelDefinition,
@@ -225,7 +227,7 @@ function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
         if (existing && sameEntityKinds(existing.object, object)) {
             if (existing.object !== object) {
                 updateLevelEntity(world, existing, object);
-                updateLevelRendering(world, existing, object);
+                updateLevelRendering(world, existing, object, editor.materials!.goal);
             }
             return existing;
         }
@@ -1442,13 +1444,28 @@ function numericField(
     return field;
 }
 
+export function setSurfaceProperty(world: World, value: unknown): void {
+    const object = selectedObject(world);
+    if (!object || (object.role !== "ground" && object.role !== "platform")) return;
+    const editor = world.resource(editorState);
+    try {
+        const surface = parseAuthoredSurface(value);
+        const level = activeLevel(world.resource(runtime));
+        changedLevel(world, { ...level, objects: level.objects.map(entry => entry.id === object.id ? { ...object, surface } : entry) }, cloneLevel(level));
+        refreshMountedUi(world);
+    } catch (error) {
+        setStatus(editor, error instanceof Error ? error.message : String(error));
+        refreshMountedUi(world);
+    }
+}
+
 function renderProperties(world: World, root: HTMLElement): void {
     const editor = world.resource(editorState);
     const level = activeLevel(world.resource(runtime));
     const panel = root.querySelector<HTMLElement>("[data-properties]");
     if (!panel) throw new Error("Editor properties panel is missing");
     const active = document.activeElement;
-    if (active instanceof HTMLInputElement && active.dataset.property) return;
+    if (active instanceof HTMLInputElement && (active.dataset.property || active.dataset.surfaceCoefficient || active.dataset.surfaceDirection)) return;
     panel.replaceChildren();
     if (!editor.selectedId) {
         const note = document.createElement("div");
@@ -1480,6 +1497,88 @@ function renderProperties(world: World, root: HTMLElement): void {
     if (!object) return;
     heading.textContent = `${object.id} · ${object.role}`;
     panel.append(heading);
+    if (object.role === "ground" || object.role === "platform") {
+        const overlaps = overlappingLevelSurfaces(level).filter(pair => pair.includes(object.id));
+        if (overlaps.length) {
+            const diagnostic = document.createElement("div");
+            diagnostic.textContent = `Ambiguous equal-height surfaces: ${overlaps.map(pair => pair.join(" / ")).join(", ")}`;
+            panel.append(diagnostic);
+        }
+        const label = document.createElement("label");
+        label.textContent = "Surface profile";
+        const select = document.createElement("select");
+        select.dataset.surfaceProfile = "";
+        for (const profile of Object.keys(SURFACE_PROFILES)) {
+            const option = document.createElement("option");
+            option.value = option.textContent = profile;
+            select.append(option);
+        }
+        select.value = object.surface?.profile ?? "default";
+        select.addEventListener("change", () => setSurfaceProperty(world, select.value === "directional" ? { profile: select.value, directionXZ: [1, 0] } : { profile: select.value }));
+        label.append(select);
+        panel.append(label);
+        const authored = object.surface ?? { profile: "default" as const };
+        const response = resolveSurface(authored);
+        const preset: SurfaceResponse = SURFACE_PROFILES[authored.profile];
+        const coefficientFields: { key: keyof SurfaceResponse; label: string; maximum?: number }[] = [
+            { key: "bounceScale", label: "Bounce strength (multiplier)" },
+            { key: "restitution", label: "Impact rebound (0–1)", maximum: 1 },
+            { key: "impactSpeedLimit", label: "Impact speed limit (m/s)" },
+            { key: "momentumRetention", label: "Momentum retained (0–1)", maximum: 1 },
+            { key: "contactDrag", label: "Contact drag (1/s)" },
+            { key: "minimumDwell", label: "Minimum contact time (s)", maximum: 0.3 },
+            ...(authored.profile === "directional" ? [{ key: "directionalSpeed" as const, label: "Directional speed (m/s)" }] : []),
+            { key: "maximumVerticalSpeed", label: "Vertical speed limit (m/s, blank for none)" },
+        ];
+        for (const { key, label, maximum } of coefficientFields) {
+            const field = document.createElement("label");
+            field.textContent = label;
+            const input = document.createElement("input");
+            input.type = "number";
+            input.step = "any";
+            input.min = "0";
+            if (maximum !== undefined) input.max = String(maximum);
+            input.value = response[key] === undefined ? "" : String(response[key]);
+            input.dataset.surfaceCoefficient = key;
+            input.addEventListener("change", () => {
+                const overrides: SurfaceOverrides = { ...authored.overrides };
+                const value = input.value.trim() === "" ? (key === "maximumVerticalSpeed" ? null : NaN) : Number(input.value);
+                if (value === preset[key] || (value === null && preset[key] === undefined)) delete overrides[key];
+                else if (key === "maximumVerticalSpeed") overrides.maximumVerticalSpeed = value;
+                else overrides[key] = value as number;
+                setSurfaceProperty(world, { ...authored, overrides });
+            });
+            field.append(input);
+            panel.append(field);
+        }
+        const reset = document.createElement("button");
+        reset.textContent = "Reset surface values";
+        reset.disabled = authored.overrides === undefined;
+        reset.addEventListener("click", () => {
+            const { overrides, ...presetSurface } = authored;
+            setSurfaceProperty(world, presetSurface);
+        });
+        panel.append(reset);
+        if (object.surface?.profile === "directional") {
+            const direction = object.surface.directionXZ;
+            for (const [axis, name] of ["X", "Z"].entries()) {
+                const field = document.createElement("label");
+                field.textContent = `Local direction ${name}`;
+                const input = document.createElement("input");
+                input.type = "number";
+                input.step = "0.1";
+                input.value = String(direction[axis]);
+                input.dataset.surfaceDirection = name;
+                input.addEventListener("change", () => {
+                    const next = [...direction];
+                    next[axis] = Number(input.value);
+                    setSurfaceProperty(world, { ...authored, directionXZ: next });
+                });
+                field.append(input);
+                panel.append(field);
+            }
+        }
+    }
     const position = document.createElement("div");
     position.className = "editor-property-group";
     position.innerHTML = "<span class=editor-title>Position</span>";

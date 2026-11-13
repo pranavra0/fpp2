@@ -1,0 +1,296 @@
+{
+    "id": "surface-comparison",
+    "spawnPosition": [
+        0,
+        2,
+        0
+    ],
+    "failureBoundaryY": -10,
+    "objects": [
+        {
+            "id": "start",
+            "role": "ground",
+            "transform": {
+                "position": [
+                    0,
+                    -0.2,
+                    0
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    8,
+                    0.4,
+                    8
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "ground"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            }
+        },
+        {
+            "id": "elastic-height",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    0,
+                    1.8,
+                    -8
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "surface": {
+                "profile": "elastic"
+            }
+        },
+        {
+            "id": "high-option",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    0,
+                    6.8,
+                    -14
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    4,
+                    0.4,
+                    4
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            }
+        },
+        {
+            "id": "default-carry",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    6,
+                    1.8,
+                    -8
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            }
+        },
+        {
+            "id": "grip-recovery",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    5,
+                    -0.2,
+                    -15
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "surface": {
+                "profile": "grip"
+            }
+        },
+        {
+            "id": "directional-shortcut",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    10,
+                    1.8,
+                    -14
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    5,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "surface": {
+                "profile": "directional",
+                "directionXZ": [
+                    0,
+                    -1
+                ]
+            }
+        },
+        {
+            "id": "exit",
+            "role": "platform",
+            "transform": {
+                "position": [
+                    5,
+                    1.8,
+                    -22
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    10,
+                    0.4,
+                    5
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "platform"
+            },
+            "collision": {
+                "kind": "box",
+                "dimensions": [
+                    1,
+                    1,
+                    1
+                ]
+            }
+        },
+        {
+            "id": "goal",
+            "role": "goal",
+            "transform": {
+                "position": [
+                    5,
+                    3,
+                    -22
+                ],
+                "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                ],
+                "scale": [
+                    1,
+                    1,
+                    1
+                ]
+            },
+            "visual": {
+                "kind": "box",
+                "material": "goal"
+            },
+            "collision": {
+                "kind": "trigger-box",
+                "dimensions": [
+                    2,
+                    2,
+                    2
+                ]
+            }
+        }
+    ]
+}

@@ -1,3 +1,4 @@
+import { resolveSurface } from "../surfaces";
 import {
     MeshInstance,
     MeshMaterial,
@@ -145,6 +146,40 @@ function addBoxVisual(
     return eid;
 }
 
+function updateSurfaceIndicators(world: World, entity: LevelEntity, object: LevelObjectDefinition, material: MaterialHandle): void {
+    for (const eid of entity.indicatorEids ?? []) world.destroy(eid);
+    entity.indicatorEids = [];
+    if (!("surface" in object) || !object.surface || object.surface.profile === "default") return;
+    const { position, scale } = object.transform;
+    const topY = position[1] + scale[1] * object.collision.dimensions[1] / 2 + 0.025;
+    const rotationY = 2 * Math.atan2(object.transform.rotation[1], object.transform.rotation[3]);
+    const response = resolveSurface(object.surface, rotationY);
+    const size = Math.min(1, scale[0] * object.collision.dimensions[0] * 0.3, scale[2] * object.collision.dimensions[2] * 0.3);
+    const bar = (x: number, z: number, length: number, angle: number) => {
+        const eid = world.create();
+        world.add(eid, Transform, { translation: [position[0] + x, topY, position[2] + z],
+            scale: [length, 0.035, size * 0.09], rotation: [0, Math.sin(angle / 2), 0, Math.cos(angle / 2)] });
+        world.add(eid, MeshInstance);
+        world.add(eid, MeshMaterial, material);
+        entity.indicatorEids!.push(eid);
+    };
+    if (object.surface.profile === "directional") {
+        const angle = Math.atan2(-response.directionZ, response.directionX);
+        bar(0, 0, size, angle);
+        const headX = response.directionX * size * 0.35;
+        const headZ = response.directionZ * size * 0.35;
+        for (const sign of [-1, 1]) {
+            const wingAngle = angle + sign * Math.PI / 4;
+            bar(headX - Math.cos(wingAngle) * size * 0.18, headZ + Math.sin(wingAngle) * size * 0.18, size * 0.5, wingAngle);
+        }
+    } else if (object.surface.profile === "grip") {
+        for (const offset of [-0.3, 0, 0.3]) bar(0, offset * size, size, 0);
+    } else {
+        bar(0, 0, size, Math.PI / 4);
+        bar(0, 0, size, -Math.PI / 4);
+    }
+}
+
 export function addLevelRendering(
     world: World,
     objects: readonly LevelEntity[],
@@ -153,6 +188,7 @@ export function addLevelRendering(
     const cache = world.resource(levelAssetCache);
     for (const entity of objects) {
         const { object } = entity;
+        updateSurfaceIndicators(world, entity, object, materials.goal);
         if (object.visual.kind === "box") {
             entity.visualEids = [addBoxVisual(world, object, materials[object.visual.material])];
             continue;
@@ -177,7 +213,9 @@ export function updateLevelRendering(
     world: World,
     entity: LevelEntity,
     object: LevelObjectDefinition,
+    indicatorMaterial: MaterialHandle,
 ): void {
+    updateSurfaceIndicators(world, entity, object, indicatorMaterial);
     if (object.visual.kind !== "gltf") return;
     const gltf = world.resource(levelAssetCache).handles.get(object.visual.asset);
     if (!gltf)

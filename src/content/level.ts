@@ -1,3 +1,4 @@
+import { parseAuthoredSurface, type AuthoredSurface } from "../surfaces.ts";
 export type Vec3Tuple = readonly [number, number, number];
 export type QuaternionTuple = readonly [number, number, number, number];
 export type LevelObjectRole = "ground" | "platform" | "goal" | "checkpoint";
@@ -15,18 +16,21 @@ type LevelObjectBase = {
 
 export type LevelGroundObjectDefinition = LevelObjectBase & {
     role: "ground";
+    surface?: AuthoredSurface;
     visual: { kind: "box"; material: "ground" };
     collision: { kind: "box"; dimensions: Vec3Tuple };
 };
 
 export type LevelBoxPlatformObjectDefinition = LevelObjectBase & {
     role: "platform";
+    surface?: AuthoredSurface;
     visual: { kind: "box"; material: "platform" };
     collision: { kind: "box"; dimensions: Vec3Tuple };
 };
 
 export type LevelModelPlatformObjectDefinition = LevelObjectBase & {
     role: "platform";
+    surface?: AuthoredSurface;
     visual: { kind: "gltf"; asset: LevelAssetId };
     collision: { kind: "box"; dimensions: Vec3Tuple };
 };
@@ -125,11 +129,13 @@ function parseTransform(value: unknown, path: string): LevelObjectBase["transfor
 
 function parseObject(value: unknown, path: string): LevelObjectDefinition {
     const input = record(value, path);
-    exactKeys(input, path, ["id", "role", "transform", "visual", "collision"]);
+    exactKeys(input, path, ["id", "role", "transform", "visual", "collision", ...(Object.hasOwn(input, "surface") ? ["surface"] : [])]);
     const id = string(input.id, `${path}.id`);
     const role = input.role;
     if (role !== "ground" && role !== "platform" && role !== "goal" && role !== "checkpoint")
         invalid(`${path}.role`, 'expected "ground", "platform", "goal", or "checkpoint"');
+    if ((role === "goal" || role === "checkpoint") && Object.hasOwn(input, "surface")) invalid(`${path}.surface`, "trigger cannot have a surface");
+    const surface = Object.hasOwn(input, "surface") ? { surface: parseAuthoredSurface(input.surface) } : {};
     const transform = parseTransform(input.transform, `${path}.transform`);
     const visualInput = record(input.visual, `${path}.visual`);
     let visual: { kind: "box"; material: LevelMaterial } | { kind: "gltf"; asset: LevelAssetId };
@@ -178,6 +184,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             transform,
             visual: { kind: "box", material: "ground" },
             collision: { kind: "box", dimensions },
+            ...surface,
         };
     }
     if (visual.kind === "gltf")
@@ -187,6 +194,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             transform,
             visual,
             collision: { kind: "box", dimensions },
+            ...surface,
         };
     return {
         id,
@@ -194,6 +202,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         transform,
         visual: { kind: "box", material: "platform" },
         collision: { kind: "box", dimensions },
+            ...surface,
     };
 }
 
@@ -315,4 +324,23 @@ export function levelSurfaceContains(
         Math.abs(localX) <= surface.width * 0.5 + edgeTolerance &&
         Math.abs(localZ) <= surface.depth * 0.5 + edgeTolerance
     );
+}
+
+export function overlappingLevelSurfaces(level: LevelDefinition): readonly (readonly [string, string])[] {
+    const surfaces = levelSurfaces(level);
+    const result: [string, string][] = [];
+    for (let i = 0; i < surfaces.length; i++) {
+        const a = surfaces[i]!;
+        for (const b of surfaces.slice(i + 1)) {
+            if (Math.abs(a.topY - b.topY) > 1e-5) continue;
+            const axes = [a.rotationY, a.rotationY + Math.PI / 2, b.rotationY, b.rotationY + Math.PI / 2];
+            const overlaps = axes.every(angle => {
+                const separation = Math.abs((b.centerX - a.centerX) * Math.cos(angle) - (b.centerZ - a.centerZ) * Math.sin(angle));
+                const radius = (s: LevelSurface) => Math.abs(Math.cos(angle - s.rotationY)) * s.width / 2 + Math.abs(Math.sin(angle - s.rotationY)) * s.depth / 2;
+                return separation < radius(a) + radius(b) - 1e-6;
+            });
+            if (overlaps) result.push([a.id, b.id]);
+        }
+    }
+    return result;
 }
