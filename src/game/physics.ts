@@ -1,3 +1,4 @@
+import { configurePlatform, platformPaths, PlatformPose, PlatformMotionState, PlatformCrumbleState } from "./platform-components";
 import { resolveSurface, SURFACE_PROFILES, type SurfaceProfile } from "../surfaces";
 import {
     Body,
@@ -12,7 +13,8 @@ import {
     type Resource,
 } from "@dylanebert/shallot";
 import {
-    castShape,
+    castBodyShape,
+    emptyQueryHit,
     PhysicsWorldDefinition,
     StandardPhysicsPlugin,
     type ShapeProxy,
@@ -24,6 +26,7 @@ import {
     type LevelDefinition,
     type LevelObjectDefinition,
     type LevelSurface,
+    type Vec3Tuple,
 } from "../content/level";
 import { landingAlpha, type LandingContact, type LandingSweep } from "../sim";
 
@@ -74,6 +77,7 @@ export type LevelEntity = {
     visualEids?: number[];
     indicatorEids?: number[];
     object: LevelObjectDefinition;
+    visualPlacements?: { eid: number; position: Vec3Tuple; scale: Vec3Tuple }[];
 };
 
 function levelSurface(object: LevelObjectDefinition): LevelSurface {
@@ -117,6 +121,7 @@ function addSurface(
         ...responseData(object),
     });
     world.resource(surfaceDiagnostics).ids.set(eid, object.id);
+    configurePlatform(world, eid, object);
     return eid;
 }
 
@@ -148,6 +153,7 @@ export function destroyLevelEntities(world: World, entities: LevelEntity[]): voi
         for (const visualEid of [...entity.visualEids ?? [], ...entity.indicatorEids ?? []]) world.destroy(visualEid);
         if (entity.collisionEid !== undefined) {
             world.resource(surfaceDiagnostics).ids.delete(entity.collisionEid);
+            world.resource(platformPaths).delete(entity.collisionEid);
             world.destroy(entity.collisionEid);
         }
     }
@@ -191,6 +197,7 @@ export function updateLevelEntity(
         world.storage(LandingSurface).width.set(collisionEid, surface.width);
         world.storage(LandingSurface).depth.set(collisionEid, surface.depth);
         world.storage(LandingSurface).edgeTolerance.set(collisionEid, edgeTolerance);
+        configurePlatform(world, collisionEid, object);
     } else if (entity.collisionEid !== undefined) {
         throw new Error(`Trigger object "${entity.id}" cannot have a collision entity`);
     }
@@ -242,38 +249,39 @@ export function findLandingSurface(
     diagnostics.ambiguousObjectIds = [];
     const candidates: { alpha: number; id: string; eid: number; topY: number }[] = [];
 
-    castShape(world, sweep.previousTip, proxy, translation, (hit) => {
-        if (!world.has(hit.body, LandingSurface)) return 1;
-        const eid = hit.body;
-        const topY = surfaces.topY.get(eid);
-        const alpha = landingAlpha(sweep, topY, tuning);
-        if (alpha === undefined) return 1;
-        const x = sweep.previousTip.x + translation.x * alpha;
-        const z = sweep.previousTip.z + translation.z * alpha;
-        const surface: Pick<
-            LevelSurface,
-            "centerX" | "centerZ" | "rotationY" | "width" | "depth"
-        > = {
-            centerX: surfaces.centerX.get(eid),
-            centerZ: surfaces.centerZ.get(eid),
-            rotationY: surfaces.rotationY.get(eid),
-            width: surfaces.width.get(eid),
-            depth: surfaces.depth.get(eid),
+    const poses = world.storage(PlatformPose);
+    const hit = emptyQueryHit();
+    for (const eid of world.query([LandingSurface, PlatformPose])) {
+        if (!poses.available.get(eid) || (sweep.supportPlatform !== undefined && sweep.supportPlatform !== eid)) continue;
+        const displacement = sweep.supportOnly ? { x: 0, y: 0, z: 0 } : {
+            x: poses.x.get(eid) - poses.previousX.get(eid),
+            y: poses.y.get(eid) - poses.previousY.get(eid),
+            z: poses.z.get(eid) - poses.previousZ.get(eid),
         };
-        if (
-            !levelSurfaceContains(
-                surface,
-                x,
-                z,
-                surfaces.edgeTolerance.get(eid),
-            )
-        )
-            return 1;
+        const relativeSweep = { previousTip: {
+            x: sweep.previousTip.x + displacement.x,
+            y: sweep.previousTip.y + displacement.y,
+            z: sweep.previousTip.z + displacement.z,
+        }, currentTip: sweep.currentTip };
+        const topY = surfaces.topY.get(eid);
+        const alpha = landingAlpha(relativeSweep, topY, tuning);
+        if (alpha === undefined) continue;
+        const x = relativeSweep.previousTip.x + (relativeSweep.currentTip.x - relativeSweep.previousTip.x) * alpha;
+        const z = relativeSweep.previousTip.z + (relativeSweep.currentTip.z - relativeSweep.previousTip.z) * alpha;
+        const surface = {
+            centerX: surfaces.centerX.get(eid), centerZ: surfaces.centerZ.get(eid),
+            rotationY: surfaces.rotationY.get(eid), width: surfaces.width.get(eid), depth: surfaces.depth.get(eid),
+        };
+        if (!levelSurfaceContains(surface, x, z, surfaces.edgeTolerance.get(eid))) continue;
+        const rotation = world.storage(Transform).rotation;
+        if (!sweep.supportOnly && !castBodyShape(world, eid, relativeSweep.previousTip, proxy, {
+            x: translation.x - displacement.x, y: translation.y - displacement.y, z: translation.z - displacement.z,
+        }, { p: { x: poses.x.get(eid), y: poses.y.get(eid), z: poses.z.get(eid) },
+            q: { v: { x: rotation.x.get(eid), y: rotation.y.get(eid), z: rotation.z.get(eid) }, s: rotation.w.get(eid) } }, hit)) continue;
         const id = diagnostics.ids.get(eid);
         if (id === undefined) throw new Error("Landing surface has no authored identity");
         candidates.push({ alpha, id, eid, topY });
-        return 1;
-    });
+    }
 
     // Group against the actual earliest fraction so tolerance ties are independent of callback order.
     const tieTolerance = 1e-6;
@@ -285,7 +293,18 @@ export function findLandingSurface(
     if (selected) {
         bestId = selected.id;
         bestProfile = PROFILE_IDS[surfaces.profile.get(selected.eid)]!;
-        best = { surfaceY: selected.topY, response: {
+        const eid = selected.eid;
+        const displacement = sweep.supportOnly ? { x: 0, y: 0, z: 0 } : {
+            x: poses.x.get(eid) - poses.previousX.get(eid),
+            y: poses.y.get(eid) - poses.previousY.get(eid),
+            z: poses.z.get(eid) - poses.previousZ.get(eid),
+        };
+        best = { surfaceY: selected.topY, platformId: eid, fraction: selected.alpha,
+            point: { x: sweep.previousTip.x + translation.x * selected.alpha + displacement.x * (1 - selected.alpha),
+                y: selected.topY, z: sweep.previousTip.z + translation.z * selected.alpha + displacement.z * (1 - selected.alpha) },
+            platformPosition: { x: poses.x.get(eid), y: poses.y.get(eid), z: poses.z.get(eid) },
+            platformVelocity: { x: poses.velocityX.get(eid), y: poses.velocityY.get(eid), z: poses.velocityZ.get(eid) },
+            response: {
             bounceScale: surfaces.bounceScale.get(selected.eid),
             restitution: surfaces.restitution.get(selected.eid),
             impactSpeedLimit: surfaces.impactSpeedLimit.get(selected.eid),
@@ -305,7 +324,7 @@ export function findLandingSurface(
 export const PogoWorldCollisionPlugin: Plugin = {
     name: "PogoWorldCollision",
     dependencies: [StandardPhysicsPlugin],
-    components: [LandingSurface],
+    components: [LandingSurface, PlatformPose, PlatformMotionState, PlatformCrumbleState],
     initialize(world) {
         // Static shapes provide queries; pogo movement remains owned by the game simulation.
         world.resource(PhysicsWorldDefinition).enableAutomaticStep = false;

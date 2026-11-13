@@ -41,6 +41,7 @@ export type Sim = {
         jumpBufferT: number;
         compressionM: number;
         contactTip: Vec3;
+        support: PlatformSupport | undefined;
         carryVelX: number;
         carryVelZ: number;
         response: SurfaceSnapshot;
@@ -53,11 +54,13 @@ export type Sim = {
 export type LandingSweep = {
     previousTip: Vec3;
     currentTip: Vec3;
+    supportPlatform?: number;
+    supportOnly?: boolean;
 };
 
 export type PlayerPose = { position: Vec3; tip: Vec3 };
-export type PlayerSweep = { previous: PlayerPose; current: PlayerPose };
-export type PlayerContact = { fraction: number; normal: Vec3 };
+export type PlayerSweep = { previous: PlayerPose; current: PlayerPose; startFraction?: number };
+export type PlayerContact = { fraction: number; normal: Vec3; displacement?: Vec3; velocity?: Vec3 };
 export type PlayerQuery = (sweep: PlayerSweep) => PlayerContact | undefined;
 
 export function playerPose(sim: Sim): PlayerPose {
@@ -69,7 +72,17 @@ export function playerPose(sim: Sim): PlayerPose {
     } };
 }
 
-export type LandingContact = { surfaceY: number; response?: SurfaceSnapshot };
+export type PlatformSupport = { platformId: number; position: Vec3; velocity: Vec3; anchor: Vec3 };
+export type SupportSnapshot = { platformId: number; position: Vec3; velocity: Vec3; available: boolean };
+export type LandingContact = {
+    surfaceY: number;
+    response?: SurfaceSnapshot;
+    platformId?: number;
+    fraction?: number;
+    point?: Vec3;
+    platformPosition?: Vec3;
+    platformVelocity?: Vec3;
+};
 
 export type LandingQuery = (sweep: LandingSweep) => LandingContact | undefined;
 
@@ -107,6 +120,7 @@ export function createSim(spawn: Vec3 = { x: 0, y: 2, z: 0 }): Sim {
             jumpBufferT: 0,
             compressionM: 0,
             contactTip: { x: 0, y: 0, z: 0 },
+            support: undefined,
             carryVelX: 0,
             carryVelZ: 0,
             response: resolveSurface(),
@@ -179,9 +193,17 @@ function limitHorizontalSpeed(velocity: Vec3, tuning: Tuning): void {
     velocity.z *= scale;
 }
 
-function land(sim: Sim, topY: number, tipX: number, tipZ: number, response: SurfaceSnapshot): void {
+function land(sim: Sim, topY: number, tipX: number, tipZ: number, response: SurfaceSnapshot, contact: LandingContact): void {
     const { body, pole, pogo } = sim;
     assert(Object.values(body.vel).every(Number.isFinite), "nonfinite incoming velocity");
+    const velocity = contact.platformVelocity ?? { x: 0, y: 0, z: 0 };
+    body.vel.x -= velocity.x;
+    body.vel.y -= velocity.y;
+    body.vel.z -= velocity.z;
+    pogo.support = contact.platformId !== undefined && contact.platformPosition ? {
+        platformId: contact.platformId, position: { ...contact.platformPosition }, velocity: { ...velocity },
+        anchor: { x: tipX - contact.platformPosition.x, y: topY - contact.platformPosition.y, z: tipZ - contact.platformPosition.z },
+    } : undefined;
     pogo.response = parseSurfaceSnapshot(response);
     pogo.incomingDownwardSpeed = Math.max(0, -body.vel.y);
     pogo.pendingLaunch = undefined;
@@ -203,7 +225,9 @@ function land(sim: Sim, topY: number, tipX: number, tipZ: number, response: Surf
         topY + pole.d.y * pole.length,
         tipZ + pole.d.z * pole.length,
     );
-    body.vel.y = 0;
+    body.vel.x += velocity.x;
+    body.vel.y = velocity.y;
+    body.vel.z += velocity.z;
 }
 
 function launch(sim: Sim, tuning: Tuning): void {
@@ -244,6 +268,12 @@ function launch(sim: Sim, tuning: Tuning): void {
         charge, dwell: pogo.compressT, reason: pogo.pendingLaunch ?? "", source: reboundY > powered.y ? "impact" : "powered" });
     pogo.pendingLaunch = undefined;
     limitHorizontalSpeed(body.vel, tuning);
+    if (pogo.support) {
+        body.vel.x += pogo.support.velocity.x;
+        body.vel.y += pogo.support.velocity.y;
+        body.vel.z += pogo.support.velocity.z;
+    }
+    pogo.support = undefined;
     pogo.diagnostics.outgoing = { ...body.vel };
 }
 
@@ -312,7 +342,7 @@ function integrateStep(
     tuning: Tuning,
     controls: Controls,
     findLanding: LandingQuery,
-): void {
+): LandingContact | undefined {
     const dt = 1 / tuning.SIM_HZ;
     const { body, pole, pogo } = sim;
     sim.tick++;
@@ -340,20 +370,27 @@ function integrateStep(
             const slip = (1 - pogo.response.traction) * dt;
             pogo.contactTip.x += pogo.carryVelX * slip;
             pogo.contactTip.z += pogo.carryVelZ * slip;
-            const tip = pogo.contactTip;
-            const tolerance = tuning.LANDING_VERTICAL_TOLERANCE_M;
-            const support = findLanding({
-                previousTip: { x: tip.x, y: tip.y + tolerance, z: tip.z },
-                currentTip: { x: tip.x, y: tip.y - tolerance, z: tip.z },
-            });
-            if (!support || Math.abs(support.surfaceY - tip.y) > tolerance) {
-                const length = pole.length - pogo.compressionM;
-                setVec3(body.pos, tip.x + pole.d.x * length, tip.y + pole.d.y * length, tip.z + pole.d.z * length);
-                pogo.state = "Airborne";
-                pogo.compressionM = 0;
-                pogo.pendingLaunch = undefined;
-                return;
-            }
+        }
+        const tip = pogo.contactTip;
+        const tolerance = tuning.LANDING_VERTICAL_TOLERANCE_M;
+        const support = findLanding({
+            previousTip: { x: tip.x, y: tip.y + tolerance, z: tip.z },
+            currentTip: { x: tip.x, y: tip.y - tolerance, z: tip.z },
+            supportOnly: true,
+            ...(pogo.support ? { supportPlatform: pogo.support.platformId } : {}),
+        });
+        if (!support || Math.abs(support.surfaceY - tip.y) > tolerance) {
+            releaseSupport(sim);
+            return;
+        }
+        if (pogo.support) {
+            pogo.support.anchor.x = tip.x - pogo.support.position.x;
+            pogo.support.anchor.z = tip.z - pogo.support.position.z;
+        }
+        if (pogo.support) {
+            body.vel.x += pogo.support.velocity.x;
+            body.vel.y += pogo.support.velocity.y;
+            body.vel.z += pogo.support.velocity.z;
         }
         updateCompression(sim, tuning, controls, dt);
         return;
@@ -383,9 +420,6 @@ function integrateStep(
     const currentTipX = body.pos.x - pole.d.x * pole.length;
     const currentTipY = body.pos.y - pole.d.y * pole.length;
     const currentTipZ = body.pos.z - pole.d.z * pole.length;
-    const tipDeltaY = currentTipY - previousTipY;
-    // Upward motion cannot create a landing contact.
-    if (tipDeltaY >= 0) return;
 
     // Keep the no-hit sentinel outside [0, 1], the range of valid within-tick crossings.
     const sweep: LandingSweep = {
@@ -394,7 +428,7 @@ function integrateStep(
     };
     const contact = findLanding(sweep);
     if (contact === undefined) return;
-    const impactAlpha = landingAlpha(sweep, contact.surfaceY, tuning);
+    const impactAlpha = contact.fraction ?? landingAlpha(sweep, contact.surfaceY, tuning);
     if (impactAlpha === undefined) return;
 
     // Launch from the velocity at contact time, not from the end of the fixed step.
@@ -402,10 +436,12 @@ function integrateStep(
     land(
         sim,
         contact.surfaceY,
-        sweep.previousTip.x + (sweep.currentTip.x - sweep.previousTip.x) * impactAlpha,
-        sweep.previousTip.z + (sweep.currentTip.z - sweep.previousTip.z) * impactAlpha,
+        contact.point?.x ?? sweep.previousTip.x + (sweep.currentTip.x - sweep.previousTip.x) * impactAlpha,
+        contact.point?.z ?? sweep.previousTip.z + (sweep.currentTip.z - sweep.previousTip.z) * impactAlpha,
         contact.response ?? resolveSurface(),
+        contact,
     );
+    return contact;
 }
 
 function removeInwardMotion(vector: Vec3, normal: Vec3): void {
@@ -416,25 +452,55 @@ function removeInwardMotion(vector: Vec3, normal: Vec3): void {
     vector.z -= inward * normal.z;
 }
 
+function releaseSupport(sim: Sim): void {
+    const { pogo, body } = sim;
+    const velocity = pogo.support?.velocity ?? { x: 0, y: 0, z: 0 };
+    setVec3(body.vel, pogo.carryVelX + velocity.x, velocity.y, pogo.carryVelZ + velocity.z);
+    pogo.state = "Airborne";
+    pogo.compressionM = 0;
+    pogo.pendingLaunch = undefined;
+    pogo.support = undefined;
+}
+
+function moveSupport(sim: Sim, snapshot: SupportSnapshot | undefined): void {
+    const support = sim.pogo.support;
+    if (sim.pogo.state !== "Compression" || !support || !snapshot) return;
+    assert(snapshot.platformId === support.platformId, "support identity changed");
+    if (!snapshot.available) {
+        releaseSupport(sim);
+        return;
+    }
+    for (const axis of ["x", "y", "z"] as const) {
+        const value = snapshot.position[axis] + support.anchor[axis];
+        sim.body.pos[axis] += value - sim.pogo.contactTip[axis];
+        sim.pogo.contactTip[axis] = value;
+    }
+    support.position = { ...snapshot.position };
+    support.velocity = { ...snapshot.velocity };
+}
+
 export function step(
     sim: Sim,
     tuning: Tuning,
     controls: Controls,
     findLanding: LandingQuery,
     findContact?: PlayerQuery,
-): void {
+    support?: SupportSnapshot,
+): LandingContact | undefined {
     const previous = playerPose(sim);
-    const previousPogo = { ...sim.pogo };
-    integrateStep(sim, tuning, controls, findLanding);
-    if (!findContact) return;
+    const previousPogo = structuredClone(sim.pogo);
+    moveSupport(sim, support);
+    const accepted = integrateStep(sim, tuning, controls, findLanding);
+    if (!findContact) return accepted;
     let start = previous;
     let target = playerPose(sim);
     let blocked = false;
+    let startFraction = 0;
     for (let iteration = 0; iteration < 6; iteration++) {
-        const contact = findContact({ previous: start, current: target });
+        const contact = findContact({ previous: start, current: target, startFraction });
         if (!contact) {
             Object.assign(sim.body.pos, target.position);
-            return;
+            return sim.pogo.contactId !== previousPogo.contactId ? accepted : undefined;
         }
         assert(contact.fraction >= 0 && contact.fraction <= 1, "invalid player contact fraction");
         assert(Math.abs(Math.hypot(contact.normal.x, contact.normal.y, contact.normal.z) - 1) < 1e-5, "invalid player contact normal");
@@ -446,8 +512,19 @@ export function step(
         const position = mix(start.position, target.position);
         const tip = mix(start.tip, target.tip);
         const remaining = { x: target.position.x - position.x, y: target.position.y - position.y, z: target.position.z - position.z };
+        startFraction += (1 - startFraction) * contact.fraction;
+        const displacement = contact.displacement ?? { x: 0, y: 0, z: 0 };
+        const velocity = contact.velocity ?? { x: 0, y: 0, z: 0 };
+        for (const axis of ["x", "y", "z"] as const) {
+            remaining[axis] -= displacement[axis] * (1 - startFraction);
+            sim.body.vel[axis] -= velocity[axis];
+        }
         removeInwardMotion(remaining, contact.normal);
         removeInwardMotion(sim.body.vel, contact.normal);
+        for (const axis of ["x", "y", "z"] as const) {
+            remaining[axis] += displacement[axis] * (1 - startFraction);
+            sim.body.vel[axis] += velocity[axis];
+        }
         if (!blocked) {
             // Reject a later tip landing when a wall or ceiling was reached first.
             if (sim.pogo.contactId !== previousPogo.contactId) Object.assign(sim.pogo, previousPogo);
@@ -465,6 +542,7 @@ export function step(
                 sim.pogo.state = "Airborne";
                 sim.pogo.compressionM = 0;
                 sim.pogo.pendingLaunch = undefined;
+                sim.pogo.support = undefined;
             }
             blocked = true;
         }

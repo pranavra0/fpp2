@@ -1,3 +1,4 @@
+import { capturePlatformVisuals } from "./platforms";
 import { resolveSurface } from "../surfaces";
 import {
     MeshInstance,
@@ -193,6 +194,7 @@ export function addLevelRendering(
         updateSurfaceIndicators(world, entity, object, materials.goal);
         if (object.visual.kind === "box") {
             entity.visualEids = [addBoxVisual(world, object, materials[object.visual.material])];
+            capturePlatformVisuals(world, entity);
             continue;
         }
         const gltf = cache.handles.get(object.visual.asset);
@@ -208,6 +210,7 @@ export function addLevelRendering(
         if (placement.entities.length === 0 || placement.lightEntities.length !== 0)
             throw new Error(`glTF asset "${object.visual.asset}" does not match its static placement contract`);
         entity.visualEids = placement.entities;
+        capturePlatformVisuals(world, entity);
     }
 }
 
@@ -218,7 +221,10 @@ export function updateLevelRendering(
     indicatorMaterial: MaterialHandle,
 ): void {
     updateSurfaceIndicators(world, entity, object, indicatorMaterial);
-    if (object.visual.kind !== "gltf") return;
+    if (object.visual.kind !== "gltf") {
+        capturePlatformVisuals(world, entity);
+        return;
+    }
     const gltf = world.resource(levelAssetCache).handles.get(object.visual.asset);
     if (!gltf)
         throw new Error(
@@ -233,4 +239,5 @@ export function updateLevelRendering(
         throw new Error(`glTF asset "${object.visual.asset}" does not match its static placement contract`);
     for (const eid of entity.visualEids ?? []) world.destroy(eid);
     entity.visualEids = placement.entities;
+    capturePlatformVisuals(world, entity);
 }

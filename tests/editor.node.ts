@@ -6,6 +6,7 @@ import { DEFAULT_TUNING } from "../src/config/gameplay";
 import {
     addLevelPhysics,
     findLandingSurface,
+    LandingSurface,
     PogoWorldCollisionPlugin,
     updateLevelEntity,
 } from "../src/game/physics";
@@ -151,5 +152,40 @@ test("editing collision mode persists and updates solid player contacts", async 
         expect(findLandingSurface(app.world, { previousTip: { x: 3, y: 2.7, z: -2 }, currentTip: { x: 3, y: 2.5, z: -2 } })).toBeDefined();
         updateLevelEntity(app.world, platform, { ...changed, collision: { ...changed.collision, mode: "solid" } });
         expect(findPlayerContact(app.world, sweep)).toBeDefined();
+    } finally { app.dispose(); }
+});
+
+test("combined platform edits preserve authored settings while runtime reset restores poses and availability", async () => {
+    const { advancePlatforms, confirmPlatformContact, resetPlatforms } = await import("../src/game/platforms");
+    const { PlatformPose, PlatformMotionState, PlatformCrumbleState } = await import("../src/game/platform-components");
+    const raw = await readFile(new URL("../public/levels/prototype.json", import.meta.url), "utf8");
+    const level = parseLevelDefinition(JSON.parse(raw));
+    const app = await createApp({ defaults: false, plugins: [PogoWorldCollisionPlugin] });
+    try {
+        const world = app.world, entities = addLevelPhysics(world, level);
+        const entity = entities.find(entry => entry.id === "platform-1")!;
+        if (entity.object.role !== "platform") throw new Error("Expected a platform");
+        const object = { ...entity.object, collision: { ...entity.object.collision, mode: "one-way" as const },
+            surface: { profile: "ice" as const }, motion: { path: [[0, 0, 0], [3, 2, 0]] as const, duration: 2, phase: 0.25, mode: "ping-pong" as const },
+            crumble: { delay: 0.01, returnDelay: 1 },
+        };
+        const saved = parseLevelDefinition(JSON.parse(JSON.stringify({ ...level, objects: level.objects.map(entry => entry.id === entity.id ? object : entry) })));
+        updateLevelEntity(world, entity, saved.objects.find(entry => entry.id === entity.id)!);
+        world.step(Time.FIXED_DT);
+        const eid = entity.collisionEid!;
+        resetPlatforms(world, entities);
+        const absentPlayer = createSim({ x: 100, y: 20, z: 0 });
+        advancePlatforms(world, entities, absentPlayer, 0.1);
+        expect(world.storage(PlatformPose).x.get(eid)).toBeGreaterThan(object.transform.position[0]);
+        confirmPlatformContact(world, { platformId: eid, surfaceY: 0 });
+        advancePlatforms(world, entities, absentPlayer, 0.1);
+        expect(world.storage(PlatformPose).available.get(eid)).toBe(0);
+        expect(JSON.stringify(entity.object)).toBe(JSON.stringify(saved.objects.find(entry => entry.id === entity.id)));
+        resetPlatforms(world, entities, true);
+        expect(world.storage(PlatformPose).x.get(eid)).toBe(object.transform.position[0]);
+        expect(world.storage(PlatformPose).available.get(eid)).toBe(1);
+        expect(world.storage(PlatformMotionState).elapsed.get(eid)).toBe(0);
+        expect(world.storage(PlatformCrumbleState).phase.get(eid)).toBe(0);
+        expect(world.storage(LandingSurface).topY.get(eid)).toBeCloseTo(object.transform.position[1] + object.transform.scale[1] / 2);
     } finally { app.dispose(); }
 });

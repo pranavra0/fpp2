@@ -1,3 +1,4 @@
+import type { PlatformMotion, PlatformCrumble } from "../platforms.ts";
 import { parseAuthoredSurface, type AuthoredSurface } from "../surfaces.ts";
 export type Vec3Tuple = readonly [number, number, number];
 export type QuaternionTuple = readonly [number, number, number, number];
@@ -23,6 +24,8 @@ export type LevelGroundObjectDefinition = LevelObjectBase & {
 
 export type LevelBoxPlatformObjectDefinition = LevelObjectBase & {
     role: "platform";
+    motion?: PlatformMotion;
+    crumble?: PlatformCrumble;
     surface?: AuthoredSurface;
     visual: { kind: "box"; material: "platform" };
     collision: { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" };
@@ -30,6 +33,8 @@ export type LevelBoxPlatformObjectDefinition = LevelObjectBase & {
 
 export type LevelModelPlatformObjectDefinition = LevelObjectBase & {
     role: "platform";
+    motion?: PlatformMotion;
+    crumble?: PlatformCrumble;
     surface?: AuthoredSurface;
     visual: { kind: "gltf"; asset: LevelAssetId };
     collision: { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" };
@@ -127,15 +132,52 @@ function parseTransform(value: unknown, path: string): LevelObjectBase["transfor
     };
 }
 
+function finiteNumber(value: unknown, path: string, minimum: number, exclusive = false): number {
+    if (typeof value !== "number" || !Number.isFinite(value) || (exclusive ? value <= minimum : value < minimum))
+        invalid(path, `expected a finite number ${exclusive ? "greater than" : "at least"} ${minimum}`);
+    return value;
+}
+
+function parseMotion(value: unknown, path: string): PlatformMotion {
+    const input = record(value, path);
+    exactKeys(input, path, ["path", "duration", "phase", "mode"]);
+    if (!Array.isArray(input.path) || input.path.length < 2) invalid(`${path}.path`, "expected at least two offsets");
+    const points = input.path.map((point, index) => tuple<Vec3Tuple>(point, 3, `${path}.path[${index}]`));
+    if (points[0]!.some(value => value !== 0)) invalid(`${path}.path[0]`, "must be the starting offset [0, 0, 0]");
+    for (let index = 1; index < points.length; index++) {
+        const length = Math.hypot(...points[index]!.map((value, axis) => value - points[index - 1]![axis]!));
+        if (!(length > 0) || !Number.isFinite(length)) invalid(`${path}.path[${index}]`, "must form a finite, nonzero segment");
+    }
+    const duration = finiteNumber(input.duration, `${path}.duration`, 0, true);
+    const phase = finiteNumber(input.phase, `${path}.phase`, 0);
+    if (phase >= 1) invalid(`${path}.phase`, "must be less than one");
+    if (input.mode !== "loop" && input.mode !== "ping-pong") invalid(`${path}.mode`, 'expected "loop" or "ping-pong"');
+    return { path: points, duration, phase, mode: input.mode };
+}
+
+function parseCrumble(value: unknown, path: string): PlatformCrumble {
+    const input = record(value, path);
+    exactKeys(input, path, ["delay", ...(Object.hasOwn(input, "returnDelay") ? ["returnDelay"] : [])]);
+    const delay = finiteNumber(input.delay, `${path}.delay`, 0);
+    return { delay, ...(Object.hasOwn(input, "returnDelay") ? { returnDelay: finiteNumber(input.returnDelay, `${path}.returnDelay`, 0) } : {}) };
+}
+
 function parseObject(value: unknown, path: string): LevelObjectDefinition {
     const input = record(value, path);
-    exactKeys(input, path, ["id", "role", "transform", "visual", "collision", ...(Object.hasOwn(input, "surface") ? ["surface"] : [])]);
+    exactKeys(input, path, ["id", "role", "transform", "visual", "collision", ...["surface", "motion", "crumble"].filter(key => Object.hasOwn(input, key))]);
     const id = string(input.id, `${path}.id`);
     const role = input.role;
     if (role !== "ground" && role !== "platform" && role !== "goal" && role !== "checkpoint")
         invalid(`${path}.role`, 'expected "ground", "platform", "goal", or "checkpoint"');
     if ((role === "goal" || role === "checkpoint") && Object.hasOwn(input, "surface")) invalid(`${path}.surface`, "trigger cannot have a surface");
     const surface = Object.hasOwn(input, "surface") ? { surface: parseAuthoredSurface(input.surface) } : {};
+    const behaviors: { motion?: PlatformMotion; crumble?: PlatformCrumble } = {};
+    for (const key of ["motion", "crumble"] as const) {
+        if (!Object.hasOwn(input, key)) continue;
+        if (role !== "platform") invalid(`${path}.${key}`, "only platforms support this behavior");
+        if (key === "motion") behaviors.motion = parseMotion(input.motion, `${path}.motion`);
+        else behaviors.crumble = parseCrumble(input.crumble, `${path}.crumble`);
+    }
     const transform = parseTransform(input.transform, `${path}.transform`);
     const visualInput = record(input.visual, `${path}.visual`);
     let visual: { kind: "box"; material: LevelMaterial } | { kind: "gltf"; asset: LevelAssetId };
@@ -189,6 +231,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             visual: { kind: "box", material: "ground" },
             collision: { kind: "box", dimensions, ...collisionMode },
             ...surface,
+            ...behaviors,
         };
     }
     if (visual.kind === "gltf")
@@ -199,6 +242,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
             visual,
             collision: { kind: "box", dimensions, ...collisionMode },
             ...surface,
+            ...behaviors,
         };
     return {
         id,
@@ -207,6 +251,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         visual: { kind: "box", material: "platform" },
         collision: { kind: "box", dimensions, ...collisionMode },
             ...surface,
+            ...behaviors,
     };
 }
 

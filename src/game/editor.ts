@@ -1,3 +1,4 @@
+import { resetPlatforms } from "./platforms";
 import { parseAuthoredSurface, resolveSurface, SURFACE_PROFILES, type SurfaceOverrides, type SurfaceResponse } from "../surfaces";
 import {
     Camera,
@@ -484,6 +485,7 @@ function setMode(world: World, mode: "edit" | "play"): void {
     if (mode === "edit") {
         editor.gameCameraSettings = cameraSettings(world, game.camera);
         editor.mode = "edit";
+        resetPlatforms(world, game.levelEntities, true);
         world.remove(game.camera, Camera);
         world.add(editor.camera, Camera, editor.editorCameraSettings);
         requirePointerLock(world, false);
@@ -1405,6 +1407,7 @@ const EDITOR_STYLE = `
 #fpp2-editor .editor-title{grid-column:1/-1;color:#aaa}
 #fpp2-editor .editor-row{display:flex;gap:5px;align-items:center}#fpp2-editor .editor-row>label{flex:1;min-width:0}
 #fpp2-editor label{display:grid;gap:2px;color:#bbb}#fpp2-editor .editor-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+#fpp2-editor textarea{width:100%;min-height:64px;background:#202020;color:#eee;font:inherit}
 #fpp2-editor input,#fpp2-editor select{width:100%;min-width:0;height:27px;border:0;background:#202020;color:#eee;padding:3px 5px;font:inherit}
 #fpp2-editor button{min-height:27px;border:0;background:#292929;color:#eee;padding:3px 7px;font:inherit;cursor:pointer}
 #fpp2-editor button:hover:not(:disabled){background:#383838}#fpp2-editor button:disabled{opacity:.45;cursor:default}
@@ -1461,13 +1464,79 @@ export function setSurfaceProperty(world: World, value: unknown): void {
     }
 }
 
+export function setPlatformBehavior(world: World, key: "motion" | "crumble", value: unknown): void {
+    const object = selectedObject(world);
+    if (object?.role !== "platform") return;
+    const editor = world.resource(editorState);
+    try {
+        const level = activeLevel(world.resource(runtime));
+        const changed = { ...object };
+        delete changed[key];
+        const candidate = value === undefined ? changed : { ...changed, [key]: value };
+        const next = parseLevelDefinition({ ...level, objects: level.objects.map(entry => entry.id === object.id ? candidate : entry) });
+        changedLevel(world, next, cloneLevel(level));
+    } catch (error) {
+        setStatus(editor, error instanceof Error ? error.message : String(error));
+    }
+    refreshMountedUi(world);
+}
+
+function platformBehaviorFields(world: World, panel: HTMLElement, object: Extract<LevelObjectDefinition, { role: "platform" }>): void {
+    const field = (label: string, element: HTMLElement) => {
+        const wrapper = document.createElement("label");
+        wrapper.textContent = label;
+        wrapper.append(element);
+        panel.append(wrapper);
+    };
+    const motion = document.createElement("select");
+    motion.dataset.platformMotion = "";
+    motion.append(new Option("Stationary", "off"), new Option("Loop", "loop"), new Option("Ping-pong", "ping-pong"));
+    motion.value = object.motion?.mode ?? "off";
+    motion.addEventListener("change", () => setPlatformBehavior(world, "motion", motion.value === "off" ? undefined : {
+        path: [[0, 0, 0], [3, 0, 0]], duration: 3, phase: 0, ...object.motion, mode: motion.value,
+    }));
+    field("Motion", motion);
+    const numberField = (label: string, key: string, value: number | undefined, apply: (value: number | undefined) => void) => {
+        const input = document.createElement("input");
+        input.type = "number"; input.step = "any"; input.min = "0";
+        input.dataset.platformProperty = key;
+        input.value = value === undefined ? "" : String(value);
+        input.addEventListener("change", () => apply(input.value.trim() === "" ? undefined : Number(input.value)));
+        field(label, input);
+    };
+    if (object.motion) {
+        const config = object.motion;
+        const path = document.createElement("textarea");
+        path.dataset.platformProperty = "path";
+        path.value = JSON.stringify(config.path);
+        path.addEventListener("change", () => {
+            try { setPlatformBehavior(world, "motion", { ...config, path: JSON.parse(path.value) }); }
+            catch { setStatus(world.resource(editorState), "Path offsets must be a JSON array of [x, y, z] points"); refreshMountedUi(world); }
+        });
+        field("Path offsets (m, JSON; first point [0,0,0])", path);
+        numberField("Traversal duration (s)", "duration", config.duration, value => setPlatformBehavior(world, "motion", { ...config, duration: value }));
+        numberField("Cycle phase (0 to less than 1)", "phase", config.phase, value => setPlatformBehavior(world, "motion", { ...config, phase: value }));
+    }
+    const crumble = document.createElement("select");
+    crumble.dataset.platformCrumble = "";
+    crumble.append(new Option("Permanent platform", "off"), new Option("Crumble after landing", "on"));
+    crumble.value = object.crumble ? "on" : "off";
+    crumble.addEventListener("change", () => setPlatformBehavior(world, "crumble", crumble.value === "off" ? undefined : { delay: 0.5 }));
+    field("Lifetime", crumble);
+    if (object.crumble) {
+        const config = object.crumble;
+        numberField("Collapse delay (s)", "delay", config.delay, value => setPlatformBehavior(world, "crumble", { ...config, delay: value }));
+        numberField("Return delay (s, blank for no return)", "returnDelay", config.returnDelay, value => setPlatformBehavior(world, "crumble", value === undefined ? { delay: config.delay } : { ...config, returnDelay: value }));
+    }
+}
+
 function renderProperties(world: World, root: HTMLElement): void {
     const editor = world.resource(editorState);
     const level = activeLevel(world.resource(runtime));
     const panel = root.querySelector<HTMLElement>("[data-properties]");
     if (!panel) throw new Error("Editor properties panel is missing");
     const active = document.activeElement;
-    if (active instanceof HTMLInputElement && (active.dataset.property || active.dataset.surfaceCoefficient || active.dataset.surfaceDirection)) return;
+    if ((active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && (active.dataset.property || active.dataset.surfaceCoefficient || active.dataset.surfaceDirection || active.dataset.platformProperty)) return;
     panel.replaceChildren();
     if (!editor.selectedId) {
         const note = document.createElement("div");
@@ -1500,6 +1569,7 @@ function renderProperties(world: World, root: HTMLElement): void {
     heading.textContent = `${object.id} · ${object.role}`;
     panel.append(heading);
     if (object.role === "platform") {
+        platformBehaviorFields(world, panel, object);
         const label = document.createElement("label");
         label.textContent = "Collision";
         const select = document.createElement("select");
@@ -1665,7 +1735,7 @@ function refreshUi(world: World, root: HTMLElement): void {
     button(root, "add-project-model").disabled = editor.mode !== "edit" || modelSelect.value === "";
     button(root, "new").disabled = editor.mode !== "edit";
     button(root, "save").disabled = editor.mode !== "edit" || !dirty(editor, level);
-    for (const control of root.querySelectorAll<HTMLInputElement | HTMLSelectElement>(".editor-content input,.editor-content select"))
+    for (const control of root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(".editor-content input,.editor-content select,.editor-content textarea"))
         control.disabled = editor.mode !== "edit";
     button(root, "load").disabled = editor.mode !== "edit";
     renderProperties(world, root);

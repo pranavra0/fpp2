@@ -1,3 +1,5 @@
+import { motionOffset } from "../platforms";
+import { platformTrajectories, type PlatformTrajectory } from "./platforms";
 import { Transform, type World } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
 import { DEFAULT_TUNING } from "../config/gameplay";
@@ -62,6 +64,7 @@ function positiveDescendingCrossingTime(
 export function predictLanding(
     sim: Sim,
     level: LevelDefinition,
+    trajectories?: readonly PlatformTrajectory[],
 ): LandingPrediction | undefined {
     if (sim.pogo.state === "Compression") {
         return { position: { ...sim.pogo.contactTip }, time: 0, certain: true };
@@ -89,22 +92,43 @@ export function predictLanding(
     };
 
     for (const surface of levelSurfaces(level)) {
-        const time = positiveDescendingCrossingTime(tipY, body.vel.y, surface.topY);
-        if (time === undefined) continue;
-        const x = tipX + body.vel.x * time;
-        const z = tipZ + body.vel.z * time;
-        const edgeTolerance =
-            surface.role === "ground" ? 0 : DEFAULT_TUNING.LANDING_EDGE_TOLERANCE_M;
-        const withinSurface = levelSurfaceContains(surface, x, z, edgeTolerance);
-        if (surface.role === "ground" || withinSurface)
-            consider(time, surface.topY, withinSurface);
+        const trajectory = trajectories?.find(entry => entry.id === surface.id);
+        if (trajectories && !trajectory?.available) continue;
+        const motion = trajectory?.motion;
+        const accept = (time: number, offset: Vec3): void => {
+            if (trajectory?.collapseIn !== undefined && time >= trajectory.collapseIn) return;
+            const x = tipX + body.vel.x * time;
+            const z = tipZ + body.vel.z * time;
+            const bounds = { ...surface, centerX: surface.centerX + offset.x, centerZ: surface.centerZ + offset.z };
+            const edgeTolerance = surface.role === "ground" ? 0 : DEFAULT_TUNING.LANDING_EDGE_TOLERANCE_M;
+            const withinSurface = levelSurfaceContains(bounds, x, z, edgeTolerance);
+            if (surface.role === "ground" || withinSurface) consider(time, surface.topY + offset.y, withinSurface);
+        };
+        if (!motion) {
+            const time = positiveDescendingCrossingTime(tipY, body.vel.y, surface.topY);
+            if (time !== undefined) accept(time, { x: 0, y: 0, z: 0 });
+            continue;
+        }
+        const dt = 1 / DEFAULT_TUNING.SIM_HZ;
+        const limit = Math.min(30, positiveDescendingCrossingTime(tipY, body.vel.y, level.failureBoundaryY) ?? 5);
+        const elapsed = trajectory.elapsed;
+        for (let start = 0; start < limit && (!first || start < first.time); start += dt) {
+            const previous = motionOffset(motion, elapsed + start);
+            const current = motionOffset(motion, elapsed + start + dt);
+            const relativeY = tipY + body.vel.y * start - 0.5 * DEFAULT_TUNING.GRAVITY_MPS2 * start * start;
+            const time = positiveDescendingCrossingTime(relativeY, body.vel.y - DEFAULT_TUNING.GRAVITY_MPS2 * start - (current.y - previous.y) / dt, surface.topY + previous.y);
+            if (time === undefined || time > dt) continue;
+            const fraction = time / dt;
+            accept(start + time, { x: previous.x + (current.x - previous.x) * fraction,
+                y: previous.y + (current.y - previous.y) * fraction, z: previous.z + (current.z - previous.z) * fraction });
+        }
     }
 
     return first;
 }
 
 export function updateLandingMarker(world: World, state: GameRuntime): void {
-    const prediction = predictLanding(state.sim, activeLevel(state));
+    const prediction = predictLanding(state.sim, activeLevel(state), platformTrajectories(world, state.levelEntities));
     const pose = world.storage(Transform);
     if (prediction === undefined) {
         pose.translation.set(state.validLandingMarker, 0, CAMERA_TUNING.HIDDEN_MARKER_Y_M, 0);

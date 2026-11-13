@@ -1,3 +1,4 @@
+import { resetPlatforms } from "./platforms";
 import {
     MeshMaterial,
     releasePointerLock,
@@ -76,6 +77,7 @@ export function restartGameplay(world: World, fromStart: boolean): void {
     }
     clearMovement(state);
     resetPlayerToPosition(state, respawnPosition);
+    resetPlatforms(world, state.levelEntities);
     syncTriggerOverlaps(world);
     setCheckpointMaterials(world);
     writePose(world, state);
@@ -121,6 +123,7 @@ function handleGameplayEvent(world: World, event: GameplayEvent): void {
         progress.pendingContactSteps.length = 0;
         clearMovement(state);
         resetPlayerToPosition(state, progress.respawnPosition);
+        resetPlatforms(world, state.levelEntities);
         syncTriggerOverlaps(world);
         writePose(world, state);
         updateLandingMarker(world, state);
@@ -135,6 +138,7 @@ function handleGameplayEvent(world: World, event: GameplayEvent): void {
 
 export function initializeGameplay(world: World): void {
     const state = world.resource(runtime);
+    resetPlatforms(world, state.levelEntities, isEditing(world.resource(editorState)));
     const progress = world.resource(gameplayProgress);
     resetGameplayProgress(progress, activeLevel(state));
     syncTriggerOverlaps(world);

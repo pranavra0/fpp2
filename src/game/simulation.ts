@@ -1,3 +1,4 @@
+import { advancePlatforms, confirmPlatformContact, platformSupport } from "./platforms";
 import { type World } from "@dylanebert/shallot";
 import { StepPhysicsSystem } from "@dylanebert/shallot/standard/physics";
 import { DEFAULT_TUNING } from "../config/gameplay";
@@ -38,10 +39,13 @@ export const Simulate = {
             const incomingVerticalVelocity = state.sim.body.vel.y;
             const previousContactId = state.sim.pogo.contactId;
             const previousLaunchId = state.sim.pogo.lastLaunchedContactId;
-            step(state.sim, DEFAULT_TUNING, state.controls,
+            advancePlatforms(world, state.levelEntities, state.sim, 1 / DEFAULT_TUNING.SIM_HZ);
+            const contact = step(state.sim, DEFAULT_TUNING, state.controls,
                 sweep => findLandingSurface(world, sweep),
                 sweep => findPlayerContact(world, sweep),
+                platformSupport(world, state.sim),
             );
+            confirmPlatformContact(world, contact);
             const currentPosition = [
                 state.sim.body.pos.x,
                 state.sim.body.pos.y,

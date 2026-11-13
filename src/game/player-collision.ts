@@ -1,3 +1,4 @@
+import { PlatformPose } from "./platform-components";
 import type { World } from "@dylanebert/shallot";
 import { PLAYER_TRIGGER_CAPSULE_DIAMETER_M, PLAYER_TRIGGER_CAPSULE_HEIGHT_M } from "../config/gameplay";
 import type { PlayerContact, PlayerPose, PlayerSweep } from "../sim";
@@ -95,32 +96,51 @@ function sweepCapsule(previous: Capsule, current: Capsule, half: Vec3): PlayerCo
 
 export function findPlayerContact(world: World, sweep: PlayerSweep): PlayerContact | undefined {
     const surfaces = world.storage(LandingSurface);
+    const poses = world.storage(PlatformPose);
     const previous = capsules(sweep.previous);
     const current = capsules(sweep.current);
     let first: PlayerContact | undefined;
     for (const eid of world.query([LandingSurface])) {
-        if (surfaces.oneWay.get(eid)) continue;
+        if (surfaces.oneWay.get(eid) || !poses.available.get(eid)) continue;
+        const displacement = { x: poses.x.get(eid) - poses.previousX.get(eid), y: poses.y.get(eid) - poses.previousY.get(eid), z: poses.z.get(eid) - poses.previousZ.get(eid) };
+        const startFraction = sweep.startFraction ?? 0;
         const cosine = Math.cos(surfaces.rotationY.get(eid));
         const sine = Math.sin(surfaces.rotationY.get(eid));
         const centerX = surfaces.centerX.get(eid);
         const centerZ = surfaces.centerZ.get(eid);
         const half = { x: surfaces.width.get(eid) / 2, y: surfaces.height.get(eid) / 2, z: surfaces.depth.get(eid) / 2 };
         const centerY = surfaces.topY.get(eid) - half.y;
-        const local = (v: Vec3): Vec3 => ({ x: cosine * (v.x - centerX) - sine * (v.z - centerZ),
-            y: v.y - centerY, z: sine * (v.x - centerX) + cosine * (v.z - centerZ) });
+        const local = (v: Vec3, previous = false): Vec3 => {
+            const x = v.x - centerX + (previous ? displacement.x * (1 - startFraction) : 0);
+            const y = v.y - centerY + (previous ? displacement.y * (1 - startFraction) : 0);
+            const z = v.z - centerZ + (previous ? displacement.z * (1 - startFraction) : 0);
+            return { x: cosine * x - sine * z, y, z: sine * x + cosine * z };
+        };
         for (let index = 0; index < previous.length; index++) {
             const a = previous[index]!;
             const b = current[index]!;
-            const contact = sweepCapsule({ a: local(a.a), b: local(a.b), radius: a.radius },
+            const contact = sweepCapsule({ a: local(a.a, true), b: local(a.b, true), radius: a.radius },
                 { a: local(b.a), b: local(b.b), radius: b.radius }, half);
             if (!contact || (first && contact.fraction >= first.fraction)) continue;
             // Tip landings own the top plane; volume contacts still block earlier walls and ceilings.
             if (index === 1 && contact.normal.y > 0.99999 &&
-                sweep.previous.tip.y >= surfaces.topY.get(eid) - 1e-6 &&
+                sweep.previous.tip.y >= surfaces.topY.get(eid) - displacement.y * (1 - startFraction) - 1e-6 &&
                 Math.abs(sweep.current.tip.y - surfaces.topY.get(eid)) < 1e-6) continue;
             const n = contact.normal;
-            first = { fraction: contact.fraction, normal: { x: cosine * n.x + sine * n.z, y: n.y, z: -sine * n.x + cosine * n.z } };
+            first = { displacement, velocity: { x: poses.velocityX.get(eid), y: poses.velocityY.get(eid), z: poses.velocityZ.get(eid) }, fraction: contact.fraction, normal: { x: cosine * n.x + sine * n.z, y: n.y, z: -sine * n.x + cosine * n.z } };
         }
     }
     return first;
+}
+
+export function playerOccupiesSurface(world: World, eid: number, pose: PlayerPose): boolean {
+    const surface = world.storage(LandingSurface);
+    const cosine = Math.cos(surface.rotationY.get(eid));
+    const sine = Math.sin(surface.rotationY.get(eid));
+    const half = { x: surface.width.get(eid) / 2, y: surface.height.get(eid) / 2, z: surface.depth.get(eid) / 2 };
+    const local = (v: Vec3): Vec3 => {
+        const x = v.x - surface.centerX.get(eid), z = v.z - surface.centerZ.get(eid);
+        return { x: cosine * x - sine * z, y: v.y - surface.topY.get(eid) + half.y, z: sine * x + cosine * z };
+    };
+    return capsules(pose).some(capsule => segmentBoxDistance(local(capsule.a), local(capsule.b), half).distance <= capsule.radius + SKIN);
 }
