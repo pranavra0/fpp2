@@ -1,7 +1,8 @@
 import { Devices, requestPointerLock, type World } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
+import { campaignControlEnabled } from "../content/campaign";
 import { editorState, isEditing } from "./editor-state";
-import { runtime } from "./state";
+import { activeLevel, runtime } from "./state";
 import { gameplayProgress } from "./gameplay-state";
 import { restartGameplay } from "./gameplay-system";
 
@@ -86,15 +87,22 @@ export const ReadControls = {
         const forwardX = -Math.sin(yaw);
         const forwardZ = -Math.cos(yaw);
         // Rotate screen directions into world space so controls follow the camera yaw.
-        controls.leanX =
-            rightX * screenRight * inputScale + forwardX * screenForward * inputScale;
-        controls.leanZ =
-            rightZ * screenRight * inputScale + forwardZ * screenForward * inputScale;
-        controls.compress = active && held.has("Space");
-        controls.extend = active && held.has("KeyE");
-        controls.retract = active && held.has("KeyQ");
+        const levelId = activeLevel(state).id;
+        const steeringEnabled = campaignControlEnabled(levelId, "steering");
+        const chargeEnabled = campaignControlEnabled(levelId, "charge");
+        const poleLengthEnabled = campaignControlEnabled(levelId, "pole-length");
+        controls.leanX = steeringEnabled
+            ? rightX * screenRight * inputScale + forwardX * screenForward * inputScale
+            : 0;
+        controls.leanZ = steeringEnabled
+            ? rightZ * screenRight * inputScale + forwardZ * screenForward * inputScale
+            : 0;
+        controls.compress = chargeEnabled && active && held.has("Space");
+        controls.extend = poleLengthEnabled && active && held.has("KeyE");
+        controls.retract = poleLengthEnabled && active && held.has("KeyQ");
         controls.jumpPressed = false;
-        if (active && devices.keys.pressed.has("Space")) state.pendingJumpPress = true;
+        if (chargeEnabled && active && devices.keys.pressed.has("Space"))
+            state.pendingJumpPress = true;
         if (!active) state.pendingJumpPress = false;
     },
 };

@@ -15,6 +15,7 @@ import {
     type World,
 } from "@dylanebert/shallot";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
+import { campaignLevelForStart } from "../content/campaign";
 import { initializeGameAudio } from "./audio";
 import { CAMERA_TUNING } from "../config/camera";
 import { loadLevel } from "../content/level";
@@ -25,6 +26,7 @@ import { cameraPosition } from "./camera";
 import { activeLevel, resetPlayerToSpawn, runtime } from "./state";
 import { initializeGameplay } from "./gameplay-system";
 import { initializeGameplayHud } from "./hud";
+import { readUnlockedCampaignStageCount } from "./campaign-progress";
 
 function box(
     world: World,
@@ -44,7 +46,11 @@ export async function initializeGame(world: World): Promise<void> {
     world.onDispose(() => releasePointerLock(world));
 
     const state = world.resource(runtime);
-    const selectedLevel = new URLSearchParams(window.location.search).get("level") ?? "first-level";
+    const selectedLevel = campaignLevelForStart(
+        new URLSearchParams(window.location.search).get("level"),
+        readUnlockedCampaignStageCount(),
+        import.meta.env?.DEV === true,
+    );
     state.level = await loadLevel(selectedLevel);
     resetPlayerToSpawn(state);
     const levelDefinition = activeLevel(state);
