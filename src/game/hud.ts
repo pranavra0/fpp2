@@ -1,3 +1,5 @@
+import { effectiveCharge } from "../sim";
+import { gameAudio } from "./audio";
 import { CAMPAIGN_STAGES, campaignControlEnabled, campaignStage, campaignStageIndex, nextCampaignStage } from "../content/campaign";
 import { Devices, mountOverlay, requestPointerLock, type World } from "@dylanebert/shallot";
 import { activeLevel, runtime } from "./state";
@@ -20,6 +22,14 @@ const HUD_STYLE = `
 #fpp2-hud .hud-complete{position:absolute;bottom:10px;left:10px;display:flex;align-items:center;gap:8px;padding:5px 8px;background:#111c;pointer-events:auto}
 #fpp2-hud button{min-height:28px;padding:4px 8px;border:0;background:#333;color:#fff;font:inherit;cursor:pointer}
 #fpp2-hud button:hover{background:#444}
+#fpp2-hud .hud-hint{font-size:11px;opacity:.65;margin-top:6px}
+#fpp2-hud .hud-bottom{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:5px 8px;background:#111b;font-size:12px;white-space:nowrap}
+#fpp2-hud .hud-charge{width:64px;height:4px;background:#555;overflow:hidden}
+#fpp2-hud .hud-charge i{display:block;height:100%;background:#b47777;transform-origin:left;transform:scaleX(0)}
+#fpp2-hud .hud-audio{position:absolute;bottom:10px;right:10px;pointer-events:auto;font-size:11px}
+#fpp2-hud select{background:#222;color:#ddd;border:1px solid #555;font:inherit}
+#fpp2-hud button:focus-visible,#fpp2-hud select:focus-visible{outline:2px solid #aaa;outline-offset:2px}
+@media(max-width:650px){#fpp2-hud .hud-lesson{max-width:240px}#fpp2-hud .hud-level label{display:none}#fpp2-hud .hud-bottom{bottom:46px}}
 `;
 
 function appendControlRow(container: HTMLElement, key: string, action: string): void {
@@ -60,18 +70,27 @@ export function initializeGameplayHud(world: World): void {
         <strong data-lesson-title></strong>
         <div data-lesson-mechanic></div>
         <div data-lesson-instruction></div>
-        <div>Press H to show controls</div>
+        <div class="hud-hint">H · Controls &nbsp; Esc · Release mouse</div>
       </section>
       <section class="hud-help" data-hud-help aria-label="Controls" hidden>
         <div data-hud-controls></div>
       </section>
       </div>
+      <div class="hud-bottom"><span data-hud-motion>Automatic bounce</span><div class="hud-charge" data-hud-charge role="meter" aria-label="Charge" aria-valuemin="0" aria-valuemax="100"><i></i></div><span data-hud-lock>Click to control</span></div>
+      <button class="hud-audio" data-hud-audio aria-pressed="false">Sound on</button>
       <div class="hud-event" data-hud-event hidden></div>
       <div class="hud-complete" data-hud-complete hidden>
         <span data-hud-complete-title></span>
         <button type="button" data-hud-continue hidden>Next level</button>
         <button type="button" data-hud-restart>Replay level</button>
       </div>`;
+    root.querySelector<HTMLButtonElement>("[data-hud-audio]")!.addEventListener("click", event => {
+        const audio = world.resource(gameAudio);
+        audio.muted = !audio.muted;
+        const button = event.currentTarget as HTMLButtonElement;
+        button.textContent = audio.muted ? "Sound off" : "Sound on";
+        button.setAttribute("aria-pressed", String(audio.muted));
+    });
     const levelId = activeLevel(world.resource(runtime)).id;
     root.querySelector<HTMLElement>("[data-hud-controls]")!.replaceWith(campaignControls(levelId));
     root.querySelector<HTMLButtonElement>("[data-hud-continue]")!.addEventListener("click", () => {
@@ -116,6 +135,13 @@ const GameplayHud = {
         const level = activeLevel(state);
         const devices = world.resource(Devices);
         if (devices.enabled && devices.keys.pressed.has("KeyH")) help.hidden = !help.hidden;
+        const charge = effectiveCharge(state.sim.pogo.chargeT, state.sim.pogo.response);
+        const meter = root.querySelector<HTMLElement>("[data-hud-charge]")!;
+        meter.hidden = !campaignControlEnabled(level.id, "charge");
+        meter.setAttribute("aria-valuenow", String(Math.round(charge * 100)));
+        meter.querySelector<HTMLElement>("i")!.style.transform = `scaleX(${charge})`;
+        root.querySelector<HTMLElement>("[data-hud-motion]")!.textContent = state.controls.compress ? "Charging" : "Automatic bounce";
+        root.querySelector<HTMLElement>("[data-hud-lock]")!.textContent = devices.pointer.lock.status === "locked" ? "WASD · Steer" : "Click scene to control";
         const progress = world.resource(gameplayProgress);
         const lesson = root.querySelector<HTMLElement>("[data-hud-lesson]")!;
         const stage = campaignStage(level.id);

@@ -1,10 +1,10 @@
 import { AudioOutput, play, registerClip, type Resource, type World } from "@dylanebert/shallot";
 
 export type GameSound = "landing" | "launch" | "checkpoint" | "failure" | "complete";
-type GameAudioHandles = Record<GameSound, number>;
+type GameAudioHandles = Record<GameSound, number> & { muted: boolean };
 
-const gameAudio: Resource<GameAudioHandles> = {
-    create: () => ({ landing: -1, launch: -1, checkpoint: -1, failure: -1, complete: -1 }),
+export const gameAudio: Resource<GameAudioHandles> = {
+    create: () => ({ muted: false, landing: -1, launch: -1, checkpoint: -1, failure: -1, complete: -1 }),
 };
 
 function tone(
@@ -22,8 +22,8 @@ function tone(
         const frequency = startHz + (endHz - startHz) * t;
         const attack = Math.min(1, t / 0.04);
         const release = Math.min(1, (1 - t) / 0.25);
-        const envelope = attack * release * (1 - 0.18 * t);
-        samples[index] = Math.sin(phase) * gain * envelope;
+        const envelope = attack * release * Math.exp(-4 * t);
+        samples[index] = (Math.sin(phase) + 0.25 * Math.sin(phase * 2.01) + 0.1 * Math.sin(phase * 3.98)) * gain * envelope;
         phase += (2 * Math.PI * frequency) / sampleRate;
     }
     return samples;
@@ -54,6 +54,8 @@ export function initializeGameAudio(world: World): void {
 }
 
 export function playGameAudio(world: World, event: GameSound, volume = 1): void {
-    const clip = world.resource(gameAudio)[event];
+    const audio = world.resource(gameAudio);
+    if (audio.muted) return;
+    const clip = audio[event];
     if (clip >= 0) play(world, clip, { volume });
 }

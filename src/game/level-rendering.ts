@@ -1,7 +1,7 @@
+import { setLevelVisualMesh, flatMaterial } from "./visual-mesh";
 import { capturePlatformVisuals } from "./platforms";
 import {
     MeshInstance,
-    Meshes,
     MeshMaterial,
     Transform,
     type Resource,
@@ -9,7 +9,6 @@ import {
 } from "@dylanebert/shallot";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import { loadGltfScene, spawnGltfScene, type Gltf } from "@dylanebert/shallot/gltf";
-import { slopePoints } from "../content/level";
 import type {
     LevelAssetId,
     LevelDefinition,
@@ -135,7 +134,6 @@ function visualScale(object: LevelObjectDefinition): readonly [number, number, n
 function addBoxVisual(
     world: World,
     object: LevelObjectDefinition,
-    material: MaterialHandle,
 ): number {
     const eid = world.create();
     world.add(eid, Transform, {
@@ -143,8 +141,9 @@ function addBoxVisual(
         rotation: object.transform.rotation,
         scale: visualScale(object),
     });
-    world.add(eid, MeshInstance, { mesh: object.collision.kind === "slope" ? slopeMesh(world, object.collision.dimensions, object.collision.rise) : 0 });
-    world.add(eid, MeshMaterial, material);
+    world.add(eid, MeshInstance);
+    setLevelVisualMesh(world, eid, object);
+    world.add(eid, MeshMaterial, world.resource(flatMaterial));
     return eid;
 }
 
@@ -190,7 +189,7 @@ export function addLevelRendering(
         const { object } = entity;
         updateSurfaceIndicators(world, entity, object, materials.goal);
         if (object.visual.kind === "box") {
-            entity.visualEids = [addBoxVisual(world, object, materials[object.visual.material])];
+            entity.visualEids = [addBoxVisual(world, object)];
             capturePlatformVisuals(world, entity);
             continue;
         }
@@ -220,7 +219,7 @@ export function updateLevelRendering(
     updateSurfaceIndicators(world, entity, object, indicatorMaterial);
     if (object.visual.kind !== "gltf") {
         for (const eid of entity.visualEids ?? []) {
-            if (object.collision.kind === "slope") world.storage(MeshInstance).mesh.set(eid, slopeMesh(world, object.collision.dimensions, object.collision.rise));
+            setLevelVisualMesh(world, eid, object);
         }
         capturePlatformVisuals(world, entity);
         return;
@@ -240,19 +239,4 @@ export function updateLevelRendering(
     for (const eid of entity.visualEids ?? []) world.destroy(eid);
     entity.visualEids = placement.entities;
     capturePlatformVisuals(world, entity);
-}
-
-function slopeMesh(world: World, dimensions: Vec3Tuple, rise: number): number {
-    const points = slopePoints(dimensions, rise);
-    const vertices: number[] = [], indices: number[] = [];
-    const faces = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
-    for (const [a, b, c, d] of faces as [number, number, number, number][]) for (const triangle of [[a, b, c], [a, c, d]]) {
-        const p = triangle.map(index => [points[index * 3]!, points[index * 3 + 1]!, points[index * 3 + 2]!] as const);
-        const u = p[1]!.map((v, i) => v - p[0]![i]!), v = p[2]!.map((v, i) => v - p[0]![i]!);
-        const n = [u[1]! * v[2]! - u[2]! * v[1]!, u[2]! * v[0]! - u[0]! * v[2]!, u[0]! * v[1]! - u[1]! * v[0]!];
-        const length = Math.hypot(...n), offset = vertices.length / 8;
-        for (const point of p) vertices.push(...point, 0, n[0]! / length, n[1]! / length, n[2]! / length, 0);
-        indices.push(offset, offset + 1, offset + 2);
-    }
-    return world.resource(Meshes).add({ name: "slope", vertices: new Float32Array(vertices), indices: new Uint32Array(indices) });
 }

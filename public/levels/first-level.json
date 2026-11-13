@@ -48,7 +48,7 @@
         "position": [
           -2,
           -0.5,
-          -18
+          -12
         ],
         "rotation": [
           0,
@@ -57,9 +57,9 @@
           1
         ],
         "scale": [
-          15,
+          11,
           0.6,
-          8
+          9
         ]
       },
       "visual": {
@@ -80,9 +80,9 @@
       "role": "platform",
       "transform": {
         "position": [
-          0,
-          -0.5,
-          -40
+          2,
+          -0.25,
+          -24
         ],
         "rotation": [
           0,
@@ -91,9 +91,9 @@
           1
         ],
         "scale": [
-          15,
+          10,
           0.6,
-          8
+          9
         ]
       },
       "visual": {
@@ -114,9 +114,9 @@
       "role": "platform",
       "transform": {
         "position": [
-          20.5,
-          0.5,
-          -50
+          7,
+          0.25,
+          -35
         ],
         "rotation": [
           0,
@@ -127,7 +127,7 @@
         "scale": [
           10,
           0.6,
-          8
+          9
         ]
       },
       "visual": {
@@ -148,9 +148,9 @@
       "role": "platform",
       "transform": {
         "position": [
-          -1.5,
-          2,
-          -67
+          1,
+          0.75,
+          -47
         ],
         "rotation": [
           0,
@@ -159,9 +159,9 @@
           1
         ],
         "scale": [
-          20,
+          14,
           0.6,
-          8
+          10
         ]
       },
       "visual": {
@@ -182,9 +182,9 @@
       "role": "goal",
       "transform": {
         "position": [
-          -1.5,
-          3,
-          -70
+          1,
+          2.5,
+          -49
         ],
         "rotation": [
           0,
@@ -193,9 +193,9 @@
           1
         ],
         "scale": [
-          12.8,
-          6.9,
-          1.8
+          8,
+          4,
+          1.4
         ]
       },
       "visual": {
@@ -216,9 +216,9 @@
       "role": "checkpoint",
       "transform": {
         "position": [
-          -1.5,
+          -2,
           1,
-          -18
+          -12
         ],
         "rotation": [
           0,
@@ -227,8 +227,42 @@
           1
         ],
         "scale": [
+          3,
           2,
+          2
+        ]
+      },
+      "visual": {
+        "kind": "box",
+        "material": "checkpoint"
+      },
+      "collision": {
+        "kind": "trigger-box",
+        "dimensions": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "checkpoint-2",
+      "role": "checkpoint",
+      "transform": {
+        "position": [
+          7,
           1.8,
+          -35
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          3,
+          2,
           2
         ]
       },
@@ -250,12 +284,17 @@
     {
       "id": "start",
       "checkpointId": null,
-      "instruction": "Use WASD to steer. The pogo bounces automatically."
+      "instruction": "Steer with WASD. Bouncing is automatic. Cross the blue frame to save your position."
     },
     {
       "id": "checkpoint-1",
       "checkpointId": "checkpoint-1",
-      "instruction": "Checkpoint active. Continue to the goal."
+      "instruction": "Steer toward the next platform. Release the direction before landing to reduce drift."
+    },
+    {
+      "id": "checkpoint-2",
+      "checkpointId": "checkpoint-2",
+      "instruction": "Turn left toward the final platform. Pass through the gold frame to finish."
     }
   ]
 }

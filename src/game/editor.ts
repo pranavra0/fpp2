@@ -1,3 +1,6 @@
+import { gameplayProgress } from "./gameplay-state";
+import { writePose, updateLandingMarker } from "./presentation";
+import { updateScenery } from "./scenery";
 import { saveLevelFile } from "./editor-persistence";
 import { mountSectionProperties, mountSlopeProperty } from "./editor-properties";
 import { moveAxisLength, moveAxisHalfExtents, axisVector, axisRotation, arrowMeshData, closestRayAxis, raySphereDistance, rayTriggerDistance, intersectPlane, snapValue, constrained } from "./editor-picking";
@@ -26,6 +29,7 @@ import { viewportToWorld } from "@dylanebert/shallot/rendering";
 import { castRayClosest, emptyQueryHit } from "@dylanebert/shallot/standard/physics";
 import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import {
+    levelSurfaces,
     loadLevel,
     overlappingLevelSurfaces,
     parseLevelDefinition,
@@ -36,7 +40,7 @@ import {
     type QuaternionTuple,
     type Vec3Tuple,
 } from "../content/level";
-import { activeLevel, runtime } from "./state";
+import { activeLevel, resetPlayerToPosition, runtime } from "./state";
 import {
     addLevelObjectPhysics,
     destroyLevelEntities,
@@ -63,10 +67,6 @@ const MOVE_AXES = ["x", "y", "z"] as const;
 const HIT = emptyQueryHit();
 
 type Axis = Exclude<TransformAxis, "free">;
-
-/** Keep a move-axis handle large enough to select and outside the object's projected extent. */
-
-/** Compute the world-aligned half extents of a Y-rotated object. */
 
 function point(position: Vec3Tuple): Vec3 {
     return { x: position[0], y: position[1], z: position[2] };
@@ -161,6 +161,7 @@ function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
 
     state.level = level;
     state.levelEntities = nextEntities;
+    updateScenery(world, level);
     if (editor.selectedId !== null && editor.selectedId !== "spawn" && !objectFor(level, editor.selectedId))
         editor.selectedId = null;
     syncSpawnMarker(world, level.spawnPosition);
@@ -392,6 +393,19 @@ function setMode(world: World, mode: "edit" | "play"): void {
     requirePointerLock(world, true);
     setStatus(editor, "");
     refreshMountedUi(world);
+}
+
+function playFromSelection(world: World): void {
+    const object = selectedObject(world);
+    if (!object || object.collision.kind === "trigger-box") return;
+    const surface = levelSurfaces(activeLevel(world.resource(runtime))).find(surface => surface.id === object.id)!;
+    const position = [surface.centerX, surface.topY + 1.6, surface.centerZ] as const;
+    setMode(world, "play");
+    const state = world.resource(runtime);
+    world.resource(gameplayProgress).respawnPosition = position;
+    resetPlayerToPosition(state, position);
+    writePose(world, state);
+    updateLandingMarker(world, state);
 }
 
 function setObject(world: World, id: string, object: LevelObjectDefinition): void {
@@ -1028,6 +1042,10 @@ function handleEditorKeys(world: World, editor: EditorState): void {
     }
     if (!isEditing(editor) || isTextEntryFocused()) return;
     const control = keys.held.has("ControlLeft") || keys.held.has("ControlRight") || keys.held.has("MetaLeft") || keys.held.has("MetaRight");
+    if (control && keys.pressed.has("KeyS")) {
+        void saveProjectLevel(world);
+        return;
+    }
     if (control && keys.pressed.has("KeyZ")) {
         if (keys.held.has("ShiftLeft") || keys.held.has("ShiftRight")) redo(world);
         else undo(world);
@@ -1551,6 +1569,7 @@ function refreshUi(world: World, root: HTMLElement): void {
     const selected = selectedObject(world);
     const duplicateable = selected?.role === "platform" || selected?.role === "checkpoint";
     const deletable = selected !== undefined && selected.role !== "ground";
+    button(root, "play-selected").disabled = !isEditing(editor) || !selectedObject(world) || selectedObject(world)!.collision.kind === "trigger-box";
     button(root, "duplicate").disabled = !duplicateable;
     button(root, "delete").disabled = !deletable;
     for (const action of ["create-platform", "create-model", "open-model", "refresh-models", "add-project-model", "create-goal", "create-checkpoint"])
@@ -1588,7 +1607,7 @@ function mountEditorUi(world: World): HTMLElement {
           <div class="editor-actions"><button data-action="create-platform">Add platform</button><button data-action="create-model">Add sample model</button><button data-action="open-model">Open GLB</button><button data-action="create-goal">Add goal</button><button data-action="create-checkpoint">Add checkpoint</button></div>
           <div class="editor-row"><select aria-label="Project model" data-model-select></select><button data-action="refresh-models">Refresh</button></div>
           <div class="editor-actions"><button data-action="add-project-model">Add selected model</button></div>
-          <div class="editor-actions"><button data-action="duplicate">Duplicate</button><button data-action="delete">Delete</button></div>
+          <div class="editor-actions"><button data-action="play-selected">Test selected platform</button><button data-action="duplicate">Duplicate</button><button data-action="delete">Delete</button></div>
           <div class="editor-actions"><button data-action="undo">Undo</button><button data-action="redo">Redo</button></div>
         </details>
         <details class="editor-section" data-panel="transform">
@@ -1639,6 +1658,7 @@ function mountEditorUi(world: World): HTMLElement {
     });
     button(root, "create-goal").addEventListener("click", () => addObject(world, "goal"));
     button(root, "create-checkpoint").addEventListener("click", () => addObject(world, "checkpoint"));
+    button(root, "play-selected").addEventListener("click", () => playFromSelection(world));
     button(root, "duplicate").addEventListener("click", () => duplicateSelected(world));
     button(root, "delete").addEventListener("click", () => deleteSelected(world));
     button(root, "undo").addEventListener("click", () => undo(world));
@@ -1678,6 +1698,11 @@ function mountEditorUi(world: World): HTMLElement {
     };
     canvas?.addEventListener("pointerdown", blurEditorControl, true);
     world.onDispose(() => canvas?.removeEventListener("pointerdown", blurEditorControl, true));
+    const preventSaveDialog = (event: KeyboardEvent): void => {
+        if (isEditing(world.resource(editorState)) && (event.ctrlKey || event.metaKey) && event.code === "KeyS") event.preventDefault();
+    };
+    window.addEventListener("keydown", preventSaveDialog);
+    world.onDispose(() => window.removeEventListener("keydown", preventSaveDialog));
     const overlay = mountOverlay(canvas, world);
     overlay.append(root);
     return root;

@@ -1,3 +1,5 @@
+import { updateScenery } from "./scenery";
+import { createCharacterMeshes, landingRingMesh, tongueMesh, flatMaterial } from "./visual-mesh";
 import {
     Camera,
     DirectionalLight,
@@ -5,6 +7,7 @@ import {
     Listener,
     lookAtRotation,
     Materials,
+    Meshes,
     MeshInstance,
     MeshMaterial,
     requirePointerLock,
@@ -79,8 +82,8 @@ export async function initializeGame(world: World): Promise<void> {
     );
     world.add(camera, Camera, {
         fov: CAMERA_TUNING.BASE_FOV_DEG,
-        far: 100,
-        clearColor: 0x101827,
+        far: 180,
+        clearColor: 0x9ca69a,
     });
     world.add(camera, StandardRenderer);
     world.add(camera, Listener);
@@ -119,8 +122,8 @@ export async function initializeGame(world: World): Promise<void> {
     );
     const activeCheckpointMaterial = materials.add(
         StandardMaterial({
-            baseColor: [0.38, 0.86, 0.28, 1],
-            emissive: [0.12, 0.42, 0.035],
+            baseColor: [0.6, 1, 0.65, 1],
+            unlit: true,
             perceptualRoughness: 0.45,
         }),
     );
@@ -128,10 +131,10 @@ export async function initializeGame(world: World): Promise<void> {
         StandardMaterial({ baseColor: [0.95, 0.74, 0.24, 1], perceptualRoughness: 0.48 }),
     );
     const poleMaterial = materials.add(
-        StandardMaterial({ baseColor: [0.82, 0.25, 0.2, 1], perceptualRoughness: 0.4 }),
+        StandardMaterial({ baseColor: [0.16, 0.22, 0.24, 1], perceptualRoughness: 0.4 }),
     );
     const tipMaterial = materials.add(
-        StandardMaterial({ baseColor: [0.25, 0.68, 0.53, 1], perceptualRoughness: 0.55 }),
+        StandardMaterial({ baseColor: [0.40, 0.14, 0.15, 1], perceptualRoughness: 0.55 }),
     );
 
     const levelObjects = addLevelPhysics(world, levelDefinition);
@@ -142,6 +145,7 @@ export async function initializeGame(world: World): Promise<void> {
         checkpoint: checkpointMaterial,
     });
     state.levelEntities = levelObjects;
+    updateScenery(world, levelDefinition);
     state.levelMaterials = {
         ground: groundMaterial.material,
         platform: platformMaterial.material,
@@ -152,7 +156,11 @@ export async function initializeGame(world: World): Promise<void> {
 
     const { x, y, z } = state.sim.body.pos;
     const body = box(world, bodyMaterial, [x, y, z], [0.65, 0.82, 0.65]);
+    world.storage(MeshInstance).mesh.set(body, createCharacterMeshes(world)[0]!);
+    world.add(body, MeshMaterial, world.resource(flatMaterial));
     const pole = box(world, poleMaterial, [x, y - 0.5, z], [0.14, 1, 0.14]);
+    world.storage(MeshInstance).mesh.set(pole, world.resource(Meshes).add(tongueMesh()));
+    world.add(pole, MeshMaterial, world.resource(flatMaterial));
     const tip = box(world, tipMaterial, [x, y - 1, z], [0.34, 0.2, 0.34]);
     const initialPrediction = predictLanding(state.sim, levelDefinition);
     const initialMarkerPosition = initialPrediction?.position ?? { x: 0, y: 0, z: 0 };
@@ -187,6 +195,9 @@ export async function initializeGame(world: World): Promise<void> {
             : [0, CAMERA_TUNING.HIDDEN_MARKER_Y_M, 0],
         [CAMERA_TUNING.MARKER_BASE_SIZE_M, 0.025, CAMERA_TUNING.MARKER_BASE_SIZE_M],
     );
+    const ring = world.resource(Meshes).add(landingRingMesh());
+    world.storage(MeshInstance).mesh.set(validLandingMarker, ring);
+    world.storage(MeshInstance).mesh.set(uncertainLandingMarker, ring);
     Object.assign(state, {
         camera,
         body,

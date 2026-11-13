@@ -1,6 +1,7 @@
 import { motionOffset } from "../platforms";
 import { platformTrajectories, type PlatformTrajectory } from "./platforms";
-import { Transform, type World } from "@dylanebert/shallot";
+import { characterMeshes } from "./visual-mesh";
+import { MeshInstance, Transform, type World } from "@dylanebert/shallot";
 import { CAMERA_TUNING } from "../config/camera";
 import { DEFAULT_TUNING } from "../config/gameplay";
 import {
@@ -10,7 +11,7 @@ import {
     type LevelDefinition,
 } from "../content/level";
 import { effectiveCharge, type Sim } from "../sim";
-import { normalizeVec3, type Vec3 } from "../vec";
+import { type Vec3 } from "../vec";
 import { clamp01 } from "./math";
 import { activeLevel, runtime, type GameRuntime } from "./state";
 
@@ -197,16 +198,13 @@ export function writePose(world: World, state: GameRuntime): void {
     const bodyWidth = 1 + squash * 0.65 + state.launchStretch * 0.14;
     const bodyHeight = 1 - squash * 0.7 + state.launchStretch * 0.38;
     pose.translation.set(state.body, body.pos.x, body.pos.y, body.pos.z);
-    pose.scale.set(state.body, 0.65 * bodyWidth, 0.82 * bodyHeight, 0.65 * bodyWidth);
+    pose.scale.set(state.body, 1.35 * bodyWidth, 1.35 * bodyHeight, 1);
+    const meshes = world.resource(characterMeshes);
+    if (meshes.length) world.storage(MeshInstance).mesh.set(state.body, meshes[compression > 0.2 ? 1 : body.vel.y < -3 ? 2 : 0]!);
 
-    const bodyUp: Vec3 = {
-        x: pole.d.x * 0.3,
-        y: 1 - (1 - pole.d.y) * 0.3,
-        z: pole.d.z * 0.3,
-    };
-    // Partial alignment keeps the body from inheriting the pole's full lean.
-    normalizeVec3(bodyUp);
-    setRotationFromUp(world, state.body, bodyUp);
+    const yaw = state.cameraYaw;
+    const lean = -Math.max(-0.22, Math.min(0.22, pole.d.x * Math.cos(yaw) - pole.d.z * Math.sin(yaw)));
+    pose.rotation.set(state.body, Math.sin(yaw/2)*Math.sin(lean/2), Math.sin(yaw/2)*Math.cos(lean/2), Math.cos(yaw/2)*Math.sin(lean/2), Math.cos(yaw/2)*Math.cos(lean/2));
 
     const visibleLength = pole.length - pogo.compressionM;
     pose.scale.set(state.pole, 0.14, visibleLength, 0.14);

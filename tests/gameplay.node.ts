@@ -143,3 +143,36 @@ test("ordered checkpoint progress permits shortcuts and ignores earlier checkpoi
     expect(advanceGameplay(ordered, progress, first.transform.position, contacts(first.id))).toBeNull();
     expect(progress.respawnPosition).toEqual(later.transform.position);
 });
+
+test("opening course can be completed through every platform using steering alone", async () => {
+    const level = await readFirstLevel();
+    const app = await createApp({ defaults: false, plugins: [PogoWorldCollisionPlugin], setup(world) { addLevelPhysics(world, level); } });
+    try {
+        const { findPlayerContact } = await import("../src/game/player-collision");
+        const world = app.world;
+        world.step(Time.FIXED_DT);
+        const sim = createSim({ x: level.spawnPosition[0], y: level.spawnPosition[1], z: level.spawnPosition[2] });
+        const progress = createGameplayProgress(level);
+        const platforms = level.objects.filter(object => object.role === "platform");
+        const goal = level.objects.find(object => object.role === "goal")!;
+        const targets = [...platforms, goal].map(object => object.transform.position);
+        let target = 0;
+        for(let tick = 0; tick < DEFAULT_TUNING.SIM_HZ * 90 && progress.mode === "active"; tick++) {
+            const point = targets[target]!;
+            const dx = point[0] - sim.body.pos.x, dz = point[2] - sim.body.pos.z;
+            // A bounded steering controller checks reachability without changing movement or teleporting.
+            const controls = { ...NEUTRAL_CONTROLS,
+                leanX: Math.max(-1, Math.min(1, dx * .3 - sim.body.vel.x * .8)),
+                leanZ: Math.max(-1, Math.min(1, dz * .3 - sim.body.vel.z * .8)) };
+            const previous = position(sim.body.pos);
+            step(sim, DEFAULT_TUNING, controls, query => findLandingSurface(world, query), query => findPlayerContact(world, query));
+            const current = position(sim.body.pos);
+            const event = advanceGameplay(level, progress, current, [sweepCapsuleTriggers(level, previous, current, PLAYER_TRIGGER_CAPSULE)]);
+            expect(event).not.toBe("failure");
+            if(target < platforms.length && Math.hypot(dx,dz) < 2.4 && sim.pogo.state === "Compression") target++;
+        }
+        expect(target).toBe(platforms.length);
+        expect(progress.checkpointId).toBe("checkpoint-2");
+        expect(progress.mode).toBe("complete");
+    } finally { app.dispose(); }
+});

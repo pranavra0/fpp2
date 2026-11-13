@@ -1,3 +1,4 @@
+import { flatMaterial } from "./visual-mesh";
 import { resetPlatforms } from "./platforms";
 import {
     MeshMaterial,
@@ -32,7 +33,7 @@ function setCheckpointMaterials(world: World): void {
                 visualEid,
                 entity.id === progress.checkpointId
                     ? state.activeCheckpointMaterial
-                    : state.levelMaterials.checkpoint,
+                    : world.resource(flatMaterial).material,
             );
         }
     }
