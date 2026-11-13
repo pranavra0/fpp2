@@ -25,7 +25,7 @@ function setCheckpointMaterials(world: World): void {
     const progress = world.resource(gameplayProgress);
     const meshMaterials = world.storage(MeshMaterial).material;
     for (const entity of state.levelEntities) {
-        if (entity.object.role !== "checkpoint") continue;
+        if (entity.object.role !== "checkpoint" || entity.object.visual.kind === "gltf") continue;
         if (!entity.visualEids || entity.visualEids.length === 0)
             throw new Error(`Checkpoint visual missing for level object "${entity.id}"`);
         for (const visualEid of entity.visualEids) {

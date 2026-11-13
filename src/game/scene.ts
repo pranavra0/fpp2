@@ -1,3 +1,7 @@
+import { playtestRevision } from "./playtest";
+import { LandingSurface } from "./physics";
+import { resetGameplayWorld } from "./gameplay-system";
+import { gameplayProgress } from "./gameplay-state";
 import { updateScenery } from "./scenery";
 import { createCharacterMeshes, landingRingMesh, tongueMesh, flatMaterial } from "./visual-mesh";
 import {
@@ -23,7 +27,7 @@ import { initializeGameAudio } from "./audio";
 import { CAMERA_TUNING } from "../config/camera";
 import { loadLevel } from "../content/level";
 import { addLevelPhysics } from "./physics";
-import { addLevelRendering, loadLevelAsset, loadLevelAssets } from "./level-rendering";
+import { addLevelRendering, addSceneryModels, loadLevelAsset, loadLevelAssets } from "./level-rendering";
 import { predictLanding } from "./presentation";
 import { cameraPosition } from "./camera";
 import { activeLevel, resetPlayerToSpawn, runtime } from "./state";
@@ -56,9 +60,12 @@ export async function initializeGame(world: World): Promise<void> {
         session.save,
         import.meta.env?.DEV === true,
     );
-    state.level = await loadLevel(selectedLevel);
-    session.save.lastSelectedLevelId = selectedLevel;
-    persistBrowserCampaignSession(session);
+    const revision = world.resource(playtestRevision).current;
+    state.level = revision?.level ?? await loadLevel(selectedLevel);
+    if (!revision) {
+        session.save.lastSelectedLevelId = selectedLevel;
+        persistBrowserCampaignSession(session);
+    }
     world.addSystem(PersistCampaignCompletion);
     resetPlayerToSpawn(state);
     const levelDefinition = activeLevel(state);
@@ -146,6 +153,7 @@ export async function initializeGame(world: World): Promise<void> {
     }, levelDefinition.appearance?.surface);
     state.levelEntities = levelObjects;
     updateScenery(world, levelDefinition);
+    addSceneryModels(world, levelDefinition);
     state.levelMaterials = {
         ground: groundMaterial.material,
         platform: platformMaterial.material,
@@ -208,6 +216,13 @@ export async function initializeGame(world: World): Promise<void> {
     });
     initializeGameAudio(world);
     initializeGameplay(world);
+    if (revision?.testFrom) {
+        const eid = state.levelEntities.find(item => item.id === revision.testFrom)?.collisionEid;
+        if (eid === undefined) throw new Error(`Playtest platform "${revision.testFrom}" does not exist`);
+        const surface = world.storage(LandingSurface);
+        world.resource(gameplayProgress).respawnPosition = [surface.centerX.get(eid), surface.topY.get(eid) + 1.6, surface.centerZ.get(eid)];
+        resetGameplayWorld(world);
+    }
 
     if (import.meta.env?.DEV === true) {
         const { initializeEditor } = await import("./editor");

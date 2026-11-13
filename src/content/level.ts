@@ -12,6 +12,10 @@ export type LevelAssetId = string;
 
 export type SurfaceCollision = { kind: "box"; dimensions: Vec3Tuple; mode?: "solid" | "one-way" } | { kind: "slope"; dimensions: Vec3Tuple; rise: number; mode?: "solid" | "one-way" };
 
+export type LevelTransform = { position: Vec3Tuple; rotation: QuaternionTuple; scale: Vec3Tuple };
+export type LevelScenery = { id: string; asset: LevelAssetId; transform: LevelTransform };
+export type LevelVisual = { kind: "box"; material: LevelMaterial } | { kind: "gltf"; asset: LevelAssetId };
+
 type LevelObjectBase = {
     id: string;
     appearance?: SurfaceAppearance;
@@ -25,7 +29,7 @@ type LevelObjectBase = {
 export type LevelGroundObjectDefinition = LevelObjectBase & {
     role: "ground";
     surface?: AuthoredSurface;
-    visual: { kind: "box"; material: "ground" };
+    visual: LevelVisual;
     collision: SurfaceCollision;
 };
 
@@ -54,7 +58,7 @@ export type LevelSurfaceObjectDefinition =
 
 export type LevelTriggerObjectDefinition = LevelObjectBase & {
     role: "goal" | "checkpoint";
-    visual: { kind: "box"; material: "goal" | "checkpoint" };
+    visual: LevelVisual;
     collision: { kind: "trigger-box"; dimensions: Vec3Tuple };
 };
 
@@ -69,6 +73,7 @@ export type LevelDefinition = {
     objects: readonly LevelObjectDefinition[];
     sections?: readonly LevelSection[];
     appearance?: LevelAppearance;
+    scenery?: readonly LevelScenery[];
 };
 
 export type LevelSection = { id: string; checkpointId: string | null; instruction: string };
@@ -203,8 +208,6 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         visual = { kind: "box", material: role };
     } else if (visualInput.kind === "gltf") {
         exactKeys(visualInput, `${path}.visual`, ["kind", "asset"]);
-        if (role !== "platform")
-            invalid(`${path}.visual.kind`, 'glTF visuals are supported only for "platform" objects');
         const asset = string(visualInput.asset, `${path}.visual.asset`);
         if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(asset))
             invalid(`${path}.visual.asset`, "must be a model filename without its .glb extension");
@@ -230,26 +233,22 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
         : { kind: "box", dimensions, ...collisionMode };
     if (shape.kind === "slope" && (typeof collisionInput.rise !== "number" || Math.abs(shape.rise * transform.scale[1] / (dimensions[0] * transform.scale[0])) > 0.35)) invalid(path, "slope grade must be at most 0.35");
     if (role === "goal" || role === "checkpoint") {
-        if (visual.kind !== "box")
-            invalid(`${path}.visual.kind`, 'trigger objects require a "box" visual');
         return {
             id,
             role,
             transform,
             ...appearance,
-            visual: { kind: "box", material: role },
+            visual,
             collision: { kind: "trigger-box", dimensions },
         };
     }
     if (role === "ground") {
-        if (visual.kind !== "box")
-            invalid(`${path}.visual.kind`, 'ground objects require a "box" visual');
         return {
             id,
             role,
             transform,
             ...appearance,
-            visual: { kind: "box", material: "ground" },
+            visual,
             collision: shape,
             ...surface,
             ...behaviors,
@@ -281,7 +280,7 @@ function parseObject(value: unknown, path: string): LevelObjectDefinition {
 /** Validate unknown JSON data and return a level with unique ids and supported object variants. */
 export function parseLevelDefinition(value: unknown): LevelDefinition {
     const input = record(value, "level");
-    exactKeys(input, "level", ["id", "spawnPosition", "failureBoundaryY", "objects", ...["sections", "appearance"].filter(key => Object.hasOwn(input, key))]);
+    exactKeys(input, "level", ["id", "spawnPosition", "failureBoundaryY", "objects", ...["sections", "appearance", "scenery"].filter(key => Object.hasOwn(input, key))]);
     const id = string(input.id, "level.id");
     if (!/^[a-z0-9][a-z0-9-]*$/.test(id))
         invalid("level.id", "must use lowercase letters, numbers, and hyphens");
@@ -332,7 +331,23 @@ export function parseLevelDefinition(value: unknown): LevelDefinition {
             return { id: sectionId, checkpointId, instruction: string(section.instruction, `${path}.instruction`) };
         });
     }
-    return { id, spawnPosition, failureBoundaryY, objects, ...(sections ? { sections } : {}), ...(input.appearance === undefined ? {} : { appearance: parseLevelAppearance(input.appearance) }) };
+    let scenery: LevelScenery[] | undefined;
+    if (input.scenery !== undefined) {
+        if (!Array.isArray(input.scenery)) invalid("level.scenery", "expected an array");
+        const ids = new Set<string>();
+        scenery = input.scenery.map((value, index) => {
+            const path = `level.scenery[${index}]`;
+            const item = record(value, path);
+            exactKeys(item, path, ["id", "asset", "transform"]);
+            const id = string(item.id, `${path}.id`);
+            if (ids.has(id)) invalid(path, "duplicate scenery id");
+            ids.add(id);
+            const asset = string(item.asset, `${path}.asset`);
+            if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(asset)) invalid(path, "invalid asset identifier");
+            return { id, asset, transform: parseTransform(item.transform, `${path}.transform`) };
+        });
+    }
+    return { id, spawnPosition, failureBoundaryY, objects, ...(scenery ? { scenery } : {}), ...(sections ? { sections } : {}), ...(input.appearance === undefined ? {} : { appearance: parseLevelAppearance(input.appearance) }) };
 }
 
 /** Load `/levels/<id>.json`, validate it, and require its embedded id to match the filename. */

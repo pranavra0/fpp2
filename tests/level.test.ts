@@ -128,9 +128,10 @@ test("level validation accepts reusable platform asset IDs and rejects unsafe ID
         kind: "gltf",
         asset: "sample-platform",
     };
-    expect(() => parseLevelDefinition(modelGround)).toThrow(
-        'level.objects[0].visual.kind: glTF visuals are supported only for "platform" objects',
-    );
+    expect(parseLevelDefinition(modelGround).objects[groundIndex]?.visual).toEqual({
+        kind: "gltf",
+        asset: "sample-platform",
+    });
 });
 
 test("landing prediction uses finite ground and active level collision surfaces", async () => {

@@ -120,6 +120,7 @@ export async function loadLevelAssets(world: World, level: LevelDefinition): Pro
     for (const object of level.objects) {
         if (object.visual.kind === "gltf") assets.add(object.visual.asset);
     }
+    for (const item of level.scenery ?? []) assets.add(item.asset);
     await Promise.all([...assets].map((asset) => loadLevelAsset(world, asset)));
 }
 
@@ -243,4 +244,17 @@ export function updateLevelRendering(
     for (const eid of entity.visualEids ?? []) world.destroy(eid);
     entity.visualEids = placement.entities;
     capturePlatformVisuals(world, entity);
+}
+
+const sceneryModels: Resource<number[]> = { create: () => [] };
+export function addSceneryModels(world: World, level: LevelDefinition): void {
+    const entities = world.resource(sceneryModels);
+    for (const eid of entities) world.destroy(eid);
+    entities.length = 0;
+    for (const item of level.scenery ?? []) {
+        const gltf = world.resource(levelAssetCache).handles.get(item.asset);
+        if (!gltf) throw new Error(`Scenery asset "${item.asset}" is not loaded`);
+        const placement = spawnGltfScene(world, gltf, { translation: item.transform.position, rotation: item.transform.rotation, scale: item.transform.scale });
+        entities.push(...placement.entities);
+    }
 }

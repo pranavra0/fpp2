@@ -1,30 +1,34 @@
-# Shallot project
+# FPP2
 
-## Persistent task constraints
+## Product and art direction
 
-- Use plain technical wording only. No flavor text, jokes, emojis, themed names, or marketing language in code, comments, logs, or replies.
-- All UI elements should be barebones "in development" in feeling - avoid aestheticizing things, keep it baseline usable and ignore the rest - function over form
-- Do exactly the requested task. Do not add unrelated features, files, abstractions, configs, READMEs, or docs.
-- For simulation code, use TypeScript, plain typed objects, and free functions. Do not use classes, inheritance, getters/setters, dependency injection, or event systems.
-- Simulation code must not import Shallot, rendering, input devices, camera, or UI. It may accept plain typed controls and collision results from engine integration. Keep collision queries and level geometry outside the simulation; keep movement and contact response pure.
-- Comments explain why only. Do not add TODO comments. Use assertions for invariants; do not clamp invalid state to hide it.
-- delete every tests except algorithmic logic, boundary IO, and integration flows
-- Dont worry about inspecting the browser yourself, the user will test manually 
+- Use plain technical wording in code, comments, logs, and replies.
+- Preserve the low-fidelity 2.5D papercraft and pixel-art identity. Prioritize composition, silhouettes, color relationships, coherent shading, and gameplay readability over detail or effects.
+- Refine one representative level before extending a visual treatment to other levels. Compare actual before and after frames; do not claim visual quality without inspecting the rendered game.
+- Keep development UI simple and functional. Do not expand the browser editor into a second content creation application.
+- Blender is the source of truth for new level authoring. Use native modeling, materials, hierarchy, and custom properties. Saving should publish a validated level and assets to the running game without manual export, JSON edits, or a page refresh.
+- Keep visual meshes and explicit collision geometry distinct but derived from the same authored placement. Reject unsupported collision shapes instead of silently approximating them.
+- Preserve existing pogo physics and gameplay unless a requested feature requires a verified change.
 
-## Shallot Specific notes
-Explore this project's entry, plugins and checks first; reuse its setup.
+## Engineering
 
-- Learn the API from the installed package, not memory. `bunx shallot create --help` lists the examples in `node_modules/@dylanebert/shallot/examples/`; start from the nearest one, its implementation and its checks, then the JSDoc in `node_modules/@dylanebert/shallot/src/` for the APIs it uses.
-- Check your work as that example's checks do, with the cheapest evidence that answers: state, then a captured frame, then the browser.
-- For editor changes, verify level and collision state with the focused integration test, exercise authoring and persistence in a development browser, and report when the available GPU prevents visual scene verification.
-- While you iterate, run only the check that answers your change: `bun test ./<file>` or `bunx playwright test <file>`. Before you finish, run `bun check` and `bun test` once; CI, `.github/workflows/test.yml`, runs every tier.
-- `bun test` runs `*.test.ts` and `*.gpu.test.ts` only; run a `*.node.ts` check by path with `bun test ./<file>`. A full renderer or physics composition is a `tests/<goal>.node.ts` check, not a `*.gpu.test.ts`.
+- Use TypeScript, plain typed objects, and free functions for simulation. No classes, inheritance, getters/setters, dependency injection, or event systems in simulation.
+- Simulation must not import Shallot, rendering, input devices, camera, or UI. Keep collision queries and level geometry in engine integration; keep movement and contact response pure.
+- Follow ECS responsibilities: components hold entity state, systems perform updates, and world resources own shared assets and authoring state. Avoid duplicated authoritative state.
+- Separate content validation, import/publication, rendering, and gameplay. Prefer small cohesive modules over monoliths or generic frameworks.
+- Make ownership explicit. Dispose old level resources on replacement; inspect the installed engine's lifetime contracts before assuming assets can be individually released.
+- Publish assets before the level manifest. Reject invalid publications without replacing the last valid level. Version assets by content so geometry, materials, and collision update together.
+- Comments explain why. Do not add TODO comments or hide invalid state through clamping. Assert invariants.
+- Keep tests for algorithmic logic, boundary IO, and integration flows. Do not add tests that mirror incidental implementation details.
+- Do only the requested work. Do not add unrelated levels, features, configuration, or documentation.
 
+## Shallot and verification
 
----
-
-## Project Specific notes
-
-- look at /docs/ , gitignored with personal notes and things
-
-- follow standard ECS design
+- Inspect the entry point, plugins, and existing checks first. Learn APIs from the installed package rather than memory.
+- `bunx shallot create --help` lists installed examples in `node_modules/@dylanebert/shallot/examples/`. Read the nearest example, its checks, and the relevant JSDoc in `node_modules/@dylanebert/shallot/src/`.
+- Do not infer arbitrary collision support from GLB rendering support. FPP2's pogo contact queries have their own geometry contract.
+- During iteration run the focused check that answers the change: `bun test ./<file>` or the relevant browser check.
+- Verify Blender integration with an actual Blender export, native collision queries, simulated landings, and a running browser receiving successive saves. Check coordinate conversion, modified materials and geometry, deleted objects, failed updates, and selected-platform starts.
+- Inspect actual browser frames for rendering changes. Report GPU or browser limitations explicitly; parsing or compilation is not visual verification.
+- Before finishing, run `bun check` and `bun test` once. Run relevant `tests/*.node.ts` integration checks by explicit path; they are not included by plain `bun test`.
+- Consult `docs/` if present for personal project notes. It is gitignored and may be absent.

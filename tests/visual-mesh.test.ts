@@ -19,9 +19,13 @@ test("thin and narrow platforms do not produce inverted decorative top faces", (
     const platform = level.objects.find(object => object.role === "platform")!;
     const mesh = levelVisualMesh({ ...platform, transform: { ...platform.transform, scale: [.1,.1,.1] } });
     expect([...mesh.vertices].every(Number.isFinite)).toBe(true);
-    // The fourth cuboid is the top inset; its front edge must keep positive width.
-    const first = 3 * 24 * 8;
-    expect(mesh.vertices[first + 8]! - mesh.vertices[first]!).toBeGreaterThan(0);
+    for (let index = 0; index < mesh.indices.length; index += 3) {
+        const points = [0, 1, 2].map(offset => mesh.indices[index + offset]! * 8);
+        const [a, b, c] = points as [number, number, number];
+        const u = [0, 1, 2].map(axis => mesh.vertices[b + axis]! - mesh.vertices[a + axis]!);
+        const v = [0, 1, 2].map(axis => mesh.vertices[c + axis]! - mesh.vertices[a + axis]!);
+        expect(Math.hypot(u[1]! * v[2]! - u[2]! * v[1]!, u[2]! * v[0]! - u[0]! * v[2]!, u[0]! * v[1]! - u[1]! * v[0]!)).toBeGreaterThan(0);
+    }
 });
 
 test("generated slope core matches collision vertices after scaling", () => {

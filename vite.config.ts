@@ -1,3 +1,4 @@
+import { blenderBridge } from "./tools/blender/server";
 import { randomUUID } from "node:crypto";
 import { lstat, link, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -215,5 +216,5 @@ function errorMessage(error: unknown): string {
 }
 
 export default {
-    plugins: [shallot(), projectLevels()],
+    plugins: [shallot(), projectLevels(), blenderBridge()],
 };

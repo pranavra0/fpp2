@@ -2,11 +2,12 @@ import { gameplayProgress } from "./gameplay-state";
 import { writePose, updateLandingMarker } from "./presentation";
 import { updateScenery } from "./scenery";
 import { saveLevelFile } from "./editor-persistence";
-import { mountSectionProperties, mountSlopeProperty } from "./editor-properties";
+import { mountSectionProperties } from "./editor-properties";
+import { renderEditorInspector } from "./editor-inspector";
+import { parseAuthoredSurface } from "../surfaces";
 import { moveAxisLength, moveAxisHalfExtents, axisVector, axisRotation, arrowMeshData, closestRayAxis, raySphereDistance, rayTriggerDistance, intersectPlane, snapValue, constrained } from "./editor-picking";
 import { cloneLevel, sameLevel, dirty, saveHistory } from "./editor-edits";
 import { resetPlatforms } from "./platforms";
-import { parseAuthoredSurface, resolveSurface, SURFACE_PROFILES, type SurfaceOverrides, type SurfaceResponse } from "../surfaces";
 import {
     Camera,
     Devices,
@@ -31,7 +32,6 @@ import type { MaterialHandle } from "@dylanebert/shallot/standard/rendering";
 import {
     levelSurfaces,
     loadLevel,
-    overlappingLevelSurfaces,
     parseLevelDefinition,
     type LevelAssetId,
     type LevelDefinition,
@@ -50,6 +50,8 @@ import {
 } from "./physics";
 import {
     addLevelRendering,
+    addSceneryModels,
+    loadLevelAssets,
     cacheLevelAsset,
     loadLevelAsset,
     loadModelFile,
@@ -162,6 +164,7 @@ function syncLevel(world: World, level: LevelDefinition, refresh = true): void {
     state.level = level;
     state.levelEntities = nextEntities;
     updateScenery(world, level);
+    addSceneryModels(world, level);
     if (editor.selectedId !== null && editor.selectedId !== "spawn" && !objectFor(level, editor.selectedId))
         editor.selectedId = null;
     syncSpawnMarker(world, level.spawnPosition);
@@ -891,6 +894,7 @@ async function loadProjectLevel(world: World, id: string): Promise<void> {
     if (!confirmDiscard(editor, current)) return;
     try {
         const level = await loadLevel(id);
+        await loadLevelAssets(world, level);
         select(world, null);
         replaceLevel(world, level);
         resetGameplayToSpawn(world);
@@ -1231,33 +1235,9 @@ function button(root: HTMLElement, action: string): HTMLButtonElement {
     return element;
 }
 
-function numericField(
-    world: World,
-    label: string,
-    property: "position" | "scale",
-    axis: 0 | 1 | 2,
-    value: number,
-): HTMLLabelElement {
-    const field = document.createElement("label");
-    field.textContent = label;
-    const input = document.createElement("input");
-    input.type = "number";
-    input.step = "0.01";
-    input.value = String(value);
-    input.dataset.property = property;
-    input.dataset.axis = String(axis);
-    if (property === "scale") input.min = String(MIN_OBJECT_SIZE);
-    input.addEventListener("change", () => {
-        const parsed = Number(input.value);
-        setProperty(world, property, axis, parsed);
-        refreshMountedUi(world);
-    });
-    field.append(input);
-    return field;
-}
 
-/** Validate and apply the selected ground or platform's authored surface response. */
-export function setSurfaceProperty(world: World, value: unknown): void {
+
+function setInspectorSurface(world: World, value: unknown): void {
     const object = selectedObject(world);
     if (!object || (object.role !== "ground" && object.role !== "platform")) return;
     const editor = world.resource(editorState);
@@ -1265,15 +1245,13 @@ export function setSurfaceProperty(world: World, value: unknown): void {
         const surface = parseAuthoredSurface(value);
         const level = activeLevel(world.resource(runtime));
         changedLevel(world, { ...level, objects: level.objects.map(entry => entry.id === object.id ? { ...object, surface } : entry) }, cloneLevel(level));
-        refreshMountedUi(world);
     } catch (error) {
         setStatus(editor, error instanceof Error ? error.message : String(error));
-        refreshMountedUi(world);
     }
+    refreshMountedUi(world);
 }
 
-/** Validate and apply or remove motion or crumble behavior on the selected platform. */
-export function setPlatformBehavior(world: World, key: "motion" | "crumble", value: unknown): void {
+function setInspectorPlatformBehavior(world: World, key: "motion" | "crumble", value: unknown): void {
     const object = selectedObject(world);
     if (object?.role !== "platform") return;
     const editor = world.resource(editorState);
@@ -1288,249 +1266,6 @@ export function setPlatformBehavior(world: World, key: "motion" | "crumble", val
         setStatus(editor, error instanceof Error ? error.message : String(error));
     }
     refreshMountedUi(world);
-}
-
-function platformBehaviorFields(world: World, panel: HTMLElement, object: Extract<LevelObjectDefinition, { role: "platform" }>): void {
-    const field = (label: string, element: HTMLElement) => {
-        const wrapper = document.createElement("label");
-        wrapper.textContent = label;
-        wrapper.append(element);
-        panel.append(wrapper);
-    };
-    const motion = document.createElement("select");
-    motion.dataset.platformMotion = "";
-    motion.append(new Option("Stationary", "off"), new Option("Loop", "loop"), new Option("Ping-pong", "ping-pong"));
-    motion.value = object.motion?.mode ?? "off";
-    motion.addEventListener("change", () => setPlatformBehavior(world, "motion", motion.value === "off" ? undefined : {
-        path: [[0, 0, 0], [3, 0, 0]], duration: 3, phase: 0, ...object.motion, mode: motion.value,
-    }));
-    field("Motion", motion);
-    const numberField = (label: string, key: string, value: number | undefined, apply: (value: number | undefined) => void) => {
-        const input = document.createElement("input");
-        input.type = "number"; input.step = "any"; input.min = "0";
-        input.dataset.platformProperty = key;
-        input.value = value === undefined ? "" : String(value);
-        input.addEventListener("change", () => apply(input.value.trim() === "" ? undefined : Number(input.value)));
-        field(label, input);
-    };
-    if (object.motion) {
-        const config = object.motion;
-        const path = document.createElement("textarea");
-        path.dataset.platformProperty = "path";
-        path.value = JSON.stringify(config.path);
-        path.addEventListener("change", () => {
-            try { setPlatformBehavior(world, "motion", { ...config, path: JSON.parse(path.value) }); }
-            catch { setStatus(world.resource(editorState), "Path offsets must be a JSON array of [x, y, z] points"); refreshMountedUi(world); }
-        });
-        field("Path offsets (m, JSON; first point [0,0,0])", path);
-        numberField("Traversal duration (s)", "duration", config.duration, value => setPlatformBehavior(world, "motion", { ...config, duration: value }));
-        numberField("Cycle phase (0 to less than 1)", "phase", config.phase, value => setPlatformBehavior(world, "motion", { ...config, phase: value }));
-    }
-    const crumble = document.createElement("select");
-    crumble.dataset.platformCrumble = "";
-    crumble.append(new Option("Permanent platform", "off"), new Option("Crumble after landing", "on"));
-    crumble.value = object.crumble ? "on" : "off";
-    crumble.addEventListener("change", () => setPlatformBehavior(world, "crumble", crumble.value === "off" ? undefined : { delay: 0.5 }));
-    field("Lifetime", crumble);
-    if (object.crumble) {
-        const config = object.crumble;
-        numberField("Collapse delay (s)", "delay", config.delay, value => setPlatformBehavior(world, "crumble", { ...config, delay: value }));
-        numberField("Return delay (s, blank for no return)", "returnDelay", config.returnDelay, value => setPlatformBehavior(world, "crumble", value === undefined ? { delay: config.delay } : { ...config, returnDelay: value }));
-    }
-}
-
-function renderProperties(world: World, root: HTMLElement): void {
-    const editor = world.resource(editorState);
-    const level = activeLevel(world.resource(runtime));
-    const panel = root.querySelector<HTMLElement>("[data-properties]");
-    if (!panel) throw new Error("Editor properties panel is missing");
-    const active = document.activeElement;
-    if ((active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && (active.dataset.property || active.dataset.surfaceCoefficient || active.dataset.surfaceDirection || active.dataset.platformProperty)) return;
-    panel.replaceChildren();
-    if (!editor.selectedId) {
-        const note = document.createElement("div");
-        note.className = "editor-object";
-        note.textContent = "No selection";
-        panel.append(note);
-        return;
-    }
-    const heading = document.createElement("div");
-    heading.className = "editor-object";
-    if (editor.selectedId === "spawn") {
-        heading.textContent = "Spawn";
-        panel.append(heading);
-        const position = document.createElement("div");
-        position.className = "editor-property-group";
-        position.innerHTML = "<span class=editor-title>Position</span>";
-        const fields = document.createElement("div");
-        fields.className = "editor-fields";
-        fields.append(
-            numericField(world, "X", "position", 0, level.spawnPosition[0]),
-            numericField(world, "Y", "position", 1, level.spawnPosition[1]),
-            numericField(world, "Z", "position", 2, level.spawnPosition[2]),
-        );
-        position.append(fields);
-        panel.append(position);
-        return;
-    }
-    const object = objectFor(level, editor.selectedId);
-    if (!object) return;
-    heading.textContent = `${object.id} · ${object.role}`;
-    panel.append(heading);
-    if (object.role === "platform") {
-        platformBehaviorFields(world, panel, object);
-        mountSlopeProperty(panel, object, collision => {
-            const level = activeLevel(world.resource(runtime));
-            try { changedLevel(world, { ...level, objects: level.objects.map(entry => entry.id === object.id ? { ...object, collision } : entry) }, cloneLevel(level)); }
-            catch (error) { setStatus(editor, error instanceof Error ? error.message : String(error)); }
-            refreshMountedUi(world);
-        });
-        const label = document.createElement("label");
-        label.textContent = "Collision";
-        const select = document.createElement("select");
-        select.dataset.collisionMode = "";
-        select.append(new Option("Solid", "solid"), new Option("One-way (land from above)", "one-way"));
-        select.value = object.collision.mode ?? "solid";
-        select.addEventListener("change", () => {
-            const level = activeLevel(world.resource(runtime));
-            const mode = select.value as "solid" | "one-way";
-            changedLevel(world, { ...level, objects: level.objects.map(entry => entry.id === object.id
-                ? { ...object, collision: { ...object.collision, mode } } : entry) }, cloneLevel(level));
-            refreshMountedUi(world);
-        });
-        label.append(select);
-        panel.append(label);
-    }
-    if (object.role === "ground" || object.role === "platform") {
-        const overlaps = overlappingLevelSurfaces(level).filter(pair => pair.includes(object.id));
-        if (overlaps.length) {
-            const diagnostic = document.createElement("div");
-            diagnostic.textContent = `Ambiguous equal-height surfaces: ${overlaps.map(pair => pair.join(" / ")).join(", ")}`;
-            panel.append(diagnostic);
-        }
-        const label = document.createElement("label");
-        label.textContent = "Surface profile";
-        const select = document.createElement("select");
-        select.dataset.surfaceProfile = "";
-        for (const profile of Object.keys(SURFACE_PROFILES)) {
-            const option = document.createElement("option");
-            option.value = option.textContent = profile;
-            select.append(option);
-        }
-        select.value = object.surface?.profile ?? "default";
-        select.addEventListener("change", () => setSurfaceProperty(world, { profile: select.value as keyof typeof SURFACE_PROFILES,
-            ...(object.surface?.directionXZ ? { directionXZ: object.surface.directionXZ } : {}),
-            ...(object.surface?.overrides ? { overrides: object.surface.overrides } : {}),
-            ...(select.value === "directional" && !object.surface?.directionXZ ? { directionXZ: [1, 0] as const } : {}) }));
-        label.append(select);
-        panel.append(label);
-        const authored = object.surface ?? { profile: "default" as const };
-        const response = resolveSurface(authored);
-        const preset: SurfaceResponse = SURFACE_PROFILES[authored.profile];
-        const coefficientFields: {
-            key: "bounceScale" | "restitution" | "impactSpeedLimit" | "momentumRetention" |
-                "traction" | "contactDrag" | "minimumDwell" | "directionalSpeed" |
-                "maximumVerticalSpeed" | "chargeScale";
-            label: string;
-            maximum?: number;
-        }[] = [
-            { key: "bounceScale", label: "Bounce strength (multiplier)" },
-            { key: "restitution", label: "Impact rebound (0–1)", maximum: 1 },
-            { key: "impactSpeedLimit", label: "Impact speed limit (m/s)" },
-            { key: "momentumRetention", label: "Momentum retained (0–1)", maximum: 1 },
-            { key: "traction", label: "Traction (0–1)", maximum: 1 },
-            { key: "contactDrag", label: "Contact drag (1/s)" },
-            { key: "minimumDwell", label: "Minimum contact time (s)", maximum: 0.3 },
-            { key: "directionalSpeed" as const, label: "Directional speed (m/s)" },
-            { key: "maximumVerticalSpeed", label: "Vertical speed limit (m/s, blank for none)" },
-            { key: "chargeScale", label: "Charge multiplier (0–1)", maximum: 1 },
-        ];
-        const holdLabel = document.createElement("label");
-        holdLabel.textContent = "Hold mode";
-        const holdSelect = document.createElement("select");
-        for (const mode of ["bounded", "until-release"] as const) holdSelect.add(new Option(mode, mode));
-        holdSelect.value = response.holdMode;
-        holdSelect.addEventListener("change", () => {
-            const overrides: SurfaceOverrides = { ...authored.overrides };
-            if (holdSelect.value === preset.holdMode) delete overrides.holdMode;
-            else overrides.holdMode = holdSelect.value as "bounded" | "until-release";
-            setSurfaceProperty(world, { ...authored, overrides });
-        });
-        holdLabel.append(holdSelect);
-        panel.append(holdLabel);
-        for (const { key, label, maximum } of coefficientFields) {
-            const field = document.createElement("label");
-            field.textContent = label;
-            const input = document.createElement("input");
-            input.type = "number";
-            input.step = "any";
-            input.min = "0";
-            if (maximum !== undefined) input.max = String(maximum);
-            input.value = response[key] === undefined ? "" : String(response[key]);
-            input.dataset.surfaceCoefficient = key;
-            input.addEventListener("change", () => {
-                const overrides: SurfaceOverrides = { ...authored.overrides };
-                const value = input.value.trim() === "" ? (key === "maximumVerticalSpeed" ? null : NaN) : Number(input.value);
-                if (value === preset[key] || (value === null && preset[key] === undefined)) delete overrides[key];
-                else if (key === "maximumVerticalSpeed") overrides.maximumVerticalSpeed = value;
-                else overrides[key] = value as number;
-                setSurfaceProperty(world, { ...authored, ...(key === "directionalSpeed" && value !== null && Number(value) > 0 && !authored.directionXZ ? { directionXZ: [1, 0] as const } : {}), overrides });
-            });
-            field.append(input);
-            panel.append(field);
-        }
-        const reset = document.createElement("button");
-        reset.textContent = "Reset surface values";
-        reset.disabled = authored.overrides === undefined;
-        reset.addEventListener("click", () => {
-            const { overrides, ...presetSurface } = authored;
-            setSurfaceProperty(world, presetSurface);
-        });
-        panel.append(reset);
-        if (response.directionalSpeed > 0) {
-            const direction = object.surface?.directionXZ ?? [1, 0];
-            for (const [axis, name] of ["X", "Z"].entries()) {
-                const field = document.createElement("label");
-                field.textContent = `Local direction ${name}`;
-                const input = document.createElement("input");
-                input.type = "number";
-                input.step = "0.1";
-                input.value = String(direction[axis]);
-                input.dataset.surfaceDirection = name;
-                input.addEventListener("change", () => {
-                    const next = [...direction];
-                    next[axis] = Number(input.value);
-                    setSurfaceProperty(world, { ...authored, directionXZ: next });
-                });
-                field.append(input);
-                panel.append(field);
-            }
-        }
-    }
-    const position = document.createElement("div");
-    position.className = "editor-property-group";
-    position.innerHTML = "<span class=editor-title>Position</span>";
-    const positionFields = document.createElement("div");
-    positionFields.className = "editor-fields";
-    positionFields.append(
-        numericField(world, "X", "position", 0, object.transform.position[0]),
-        numericField(world, "Y", "position", 1, object.transform.position[1]),
-        numericField(world, "Z", "position", 2, object.transform.position[2]),
-    );
-    position.append(positionFields);
-    panel.append(position);
-    const size = document.createElement("div");
-    size.className = "editor-property-group";
-    size.innerHTML = "<span class=editor-title>Size</span>";
-    const sizeFields = document.createElement("div");
-    sizeFields.className = "editor-fields";
-    sizeFields.append(
-        numericField(world, "Width", "scale", 0, displayedScale(object)[0]),
-        numericField(world, "Height", "scale", 1, displayedScale(object)[1]),
-        numericField(world, "Depth", "scale", 2, displayedScale(object)[2]),
-    );
-    size.append(sizeFields);
-    panel.append(size);
 }
 
 function refreshUi(world: World, root: HTMLElement): void {
@@ -1582,7 +1317,15 @@ function refreshUi(world: World, root: HTMLElement): void {
     for (const control of root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(".editor-content input,.editor-content select,.editor-content textarea"))
         control.disabled = editor.mode !== "edit";
     button(root, "load").disabled = editor.mode !== "edit";
-    renderProperties(world, root);
+    renderEditorInspector(world, root, {
+        level: () => activeLevel(world.resource(runtime)),
+        change: next => changedLevel(world, next, cloneLevel(activeLevel(world.resource(runtime)))),
+        setProperty: (property, axis, value) => setProperty(world, property, axis, value),
+        setSurface: value => setInspectorSurface(world, value),
+        setPlatformBehavior: (key, value) => setInspectorPlatformBehavior(world, key, value),
+        setError: message => setStatus(editor, message),
+        refresh: () => refreshMountedUi(world),
+    });
     editor.refreshUi = false;
 }
 
