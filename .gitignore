@@ -4,3 +4,4 @@ build/
 .artifacts/
 test-results/
 /docs
+tools/blender/__pycache__/

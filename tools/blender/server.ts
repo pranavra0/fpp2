@@ -3,14 +3,14 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import { parseGlb } from "../../node_modules/@dylanebert/shallot/src/extras/gltf/glb";
+import { loadGltf, parseGlb } from "@dylanebert/shallot/gltf";
 import { parseLevelDefinition } from "../../src/content/level";
 import type { PlaytestRevision } from "../../src/game/playtest";
 
 const MAX_BYTES = 96 * 1024 * 1024;
 function digest(bytes: Uint8Array | string): string { return createHash("sha256").update(bytes).digest("hex"); }
 
-export function parsePublication(value: unknown): { revision: PlaytestRevision; assets: Map<string, Buffer> } {
+export async function parsePublication(value: unknown): Promise<{ revision: PlaytestRevision; assets: Map<string, Buffer> }> {
     if (typeof value !== "object" || value === null) throw new Error("Expected a publication");
     const input = value as Record<string, unknown>;
     if (Object.keys(input).some(key => !["level", "assets", "testFrom"].includes(key))) throw new Error("Unexpected publication field");
@@ -23,8 +23,11 @@ export function parsePublication(value: unknown): { revision: PlaytestRevision; 
         if (id !== `blender-${digest(bytes)}`) throw new Error(`Asset content hash mismatch: ${id}`);
         if (bytes.length < 20 || bytes.readUInt32LE(8) !== bytes.length) throw new Error(`Invalid GLB length: ${id}`);
         const { json, bin } = parseGlb(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
-        if (json.buffers?.some(buffer => buffer.uri) || json.images?.some(image => image.uri)) throw new Error("Blender GLBs must embed all buffers and images");
-        if (json.asset?.version !== "2.0" || !bin || !json.meshes?.length || json.animations?.length || json.skins?.length || json.extensions?.KHR_lights_punctual || json.meshes.some(mesh => mesh.primitives.some(primitive => primitive.targets?.length))) throw new Error("Expected static GLB geometry without animation, skins, or lights");
+        if (json.buffers?.length !== 1 || json.buffers[0]?.uri || json.images?.some(image => image.uri || image.bufferView === undefined)) throw new Error("Blender GLBs must embed all buffers and images");
+        if (json.asset?.version !== "2.0" || !bin || bin.byteLength < json.buffers[0]!.byteLength || bin.byteLength - json.buffers[0]!.byteLength > 3 || !json.meshes?.length || json.animations?.length || json.skins?.length || json.extensions?.KHR_lights_punctual || json.meshes.some(mesh => mesh.primitives.some(primitive => primitive.targets?.length))) throw new Error("Expected static GLB geometry without animation, skins, or lights");
+        const readAsset = (async () => new Response(bytes)) as unknown as typeof fetch;
+        const scene = await loadGltf("http://localhost/blender-asset.glb", readAsset);
+        if (!scene.instances.length || scene.animations.length || scene.skins.length || scene.lights.length || scene.unsupported.length || scene.meshes.some(mesh => [...mesh.vertices].some(value => !Number.isFinite(value)))) throw new Error(`Unsupported or invalid static GLB geometry: ${id}`);
         assets.set(id, bytes);
     }
     const used = new Set(level.objects.flatMap(object => object.visual.kind === "gltf" ? [object.visual.asset] : []));
@@ -85,7 +88,7 @@ export function blenderBridge(): Plugin {
                 if (request.headers.origin) { reply(response, 403, { error: "Use the local Blender publisher" }); return; }
                 const operation = async () => {
                     try {
-                        const publication = parsePublication(await body(request));
+                        const publication = await parsePublication(await body(request));
                         await mkdir(levels, { recursive: true });
                         await mkdir(models, { recursive: true });
                         for (const [id, bytes] of publication.assets) {

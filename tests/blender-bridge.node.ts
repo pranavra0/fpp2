@@ -11,13 +11,18 @@ function sha256(bytes: Uint8Array): string {
     return createHash("sha256").update(bytes).digest("hex");
 }
 
-function withGenerator(glb: Uint8Array, generator: string): Buffer {
+type TestGlbJson = {
+    asset: { generator?: string };
+    extensionsUsed?: string[];
+    meshes: { primitives: { attributes: Record<string, number> }[] }[];
+    accessors: { bufferView?: number }[];
+};
+
+function rewriteGlb(glb: Uint8Array, update: (json: TestGlbJson) => void): Buffer {
     const source = Buffer.from(glb);
     const jsonLength = source.readUInt32LE(12);
-    const json = JSON.parse(source.subarray(20, 20 + jsonLength).toString("utf8")) as {
-        asset: { generator?: string };
-    };
-    json.asset.generator = generator;
+    const json = JSON.parse(source.subarray(20, 20 + jsonLength).toString("utf8")) as TestGlbJson;
+    update(json);
     const jsonBytes = Buffer.from(JSON.stringify(json));
     const paddedJson = Buffer.concat([jsonBytes, Buffer.alloc((4 - (jsonBytes.length % 4)) % 4, 0x20)]);
     const oldJsonEnd = 20 + jsonLength;
@@ -34,6 +39,10 @@ function withGenerator(glb: Uint8Array, generator: string): Buffer {
     bin.copy(result, 28 + paddedJson.length);
     result.writeUInt32LE(bin.length, 20 + paddedJson.length);
     return result;
+}
+
+function withGenerator(glb: Uint8Array, generator: string): Buffer {
+    return rewriteGlb(glb, json => { json.asset.generator = generator; });
 }
 
 function level(asset: string) {
@@ -168,6 +177,84 @@ test("Blender bridge publishes immutable asset versions and rejects invalid revi
         expect(denied.status).toBe(403);
         expect(await readFile(resolve(root, "public/levels/blender-bridge-check.json"))).toEqual(secondManifest);
         expect(firstManifest.equals(secondManifest)).toBe(false);
+    } finally {
+        await bridge.close();
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test("concurrent Blender publications leave a manifest whose versioned assets are complete", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "fpp2-blender-bridge-"));
+    const source = new Uint8Array(await readFile(new URL("../public/models/sample-platform.glb", import.meta.url)));
+    const firstBytes = withGenerator(source, "concurrent-one");
+    const secondBytes = withGenerator(source, "concurrent-two");
+    const firstAsset = `blender-${sha256(firstBytes)}`;
+    const secondAsset = `blender-${sha256(secondBytes)}`;
+    const bridge = await startBridge(root);
+    try {
+        const responses = await Promise.all([
+            publish(bridge.baseUrl, { level: level(firstAsset), assets: { [firstAsset]: Buffer.from(firstBytes).toString("base64") } }),
+            publish(bridge.baseUrl, { level: level(secondAsset), assets: { [secondAsset]: Buffer.from(secondBytes).toString("base64") } }),
+        ]);
+        expect(responses.map(response => response.status)).toEqual([200, 200]);
+        const results = await Promise.all(responses.map(response => response.json() as Promise<{ revision: string }>));
+        const latest = await (await fetch(`${bridge.baseUrl}/__blender/latest`)).json() as { revision: string; level: ReturnType<typeof level> };
+        expect(results.map(result => result.revision)).toContain(latest.revision);
+        const committedLevel = JSON.parse(await readFile(resolve(root, "public/levels/blender-bridge-check.json"), "utf8"));
+        expect(committedLevel).toEqual(latest.level);
+        const selectedAsset = latest.level.objects[1]!.visual.kind === "gltf" ? latest.level.objects[1]!.visual.asset : "";
+        expect([firstAsset, secondAsset]).toContain(selectedAsset);
+        expect(await readFile(resolve(root, "public/models", `${firstAsset}.glb`))).toEqual(firstBytes);
+        expect(await readFile(resolve(root, "public/models", `${secondAsset}.glb`))).toEqual(secondBytes);
+        expect(bridge.events).toHaveLength(2);
+    } finally {
+        await bridge.close();
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+
+test("unsupported and corrupt GLBs are rejected before changing the committed revision", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "fpp2-blender-bridge-"));
+    const source = new Uint8Array(await readFile(new URL("../public/models/sample-platform.glb", import.meta.url)));
+    const validBytes = withGenerator(source, "validation-baseline");
+    const validAsset = `blender-${sha256(validBytes)}`;
+    const bridge = await startBridge(root);
+    try {
+        const first = await publish(bridge.baseUrl, { level: level(validAsset), assets: { [validAsset]: Buffer.from(validBytes).toString("base64") } });
+        expect(first.status).toBe(200);
+        const firstResult = await first.json() as { revision: string };
+        const manifestPath = resolve(root, "public/levels/blender-bridge-check.json");
+        const modelDirectory = resolve(root, "public/models");
+        const manifestBefore = await readFile(manifestPath);
+
+        const unsupportedBytes = rewriteGlb(source, json => {
+            json.extensionsUsed = [...(json.extensionsUsed ?? []), "EXT_unhandled_fixture"];
+        });
+        const unsupportedAsset = `blender-${sha256(unsupportedBytes)}`;
+        const unsupported = await publish(bridge.baseUrl, {
+            level: level(unsupportedAsset),
+            assets: { [unsupportedAsset]: Buffer.from(unsupportedBytes).toString("base64") },
+        });
+        expect(unsupported.status).toBe(400);
+        expect((await unsupported.json() as { error: string }).error).toContain("Unsupported");
+        expect(await readFile(manifestPath)).toEqual(manifestBefore);
+        expect(await readFile(resolve(modelDirectory, `${unsupportedAsset}.glb`)).then(() => true, () => false)).toBe(false);
+
+        const corruptBytes = rewriteGlb(source, json => {
+            const position = json.meshes[0]!.primitives[0]!.attributes.POSITION!;
+            json.accessors[position]!.bufferView = 100000;
+        });
+        const corruptAsset = `blender-${sha256(corruptBytes)}`;
+        const corrupt = await publish(bridge.baseUrl, {
+            level: level(corruptAsset),
+            assets: { [corruptAsset]: Buffer.from(corruptBytes).toString("base64") },
+        });
+        expect(corrupt.status).toBe(400);
+        expect(await readFile(manifestPath)).toEqual(manifestBefore);
+        expect(await readFile(resolve(modelDirectory, `${corruptAsset}.glb`)).then(() => true, () => false)).toBe(false);
+        expect((await (await fetch(`${bridge.baseUrl}/__blender/latest`)).json() as { revision: string }).revision).toBe(firstResult.revision);
+        expect(bridge.events).toHaveLength(1);
     } finally {
         await bridge.close();
         await rm(root, { recursive: true, force: true });

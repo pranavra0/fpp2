@@ -1382,7 +1382,7 @@ function mountEditorUi(world: World): HTMLElement {
     });
     button(root, "create-platform").addEventListener("click", () => addObject(world, "platform"));
     button(root, "create-model").addEventListener("click", () =>
-        addObject(world, "platform", undefined, "sample-platform"),
+        void addProjectModel(world, "sample-platform"),
     );
     button(root, "open-model").addEventListener("click", () => modelFileInput.click());
     root.querySelector<HTMLSelectElement>("[data-model-select]")!.addEventListener("change", () => {
